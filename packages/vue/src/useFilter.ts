@@ -1,8 +1,10 @@
 import {
   emptyAst,
   emptyDraft,
+  fromUrl,
   isGroup,
   prune as pruneAst,
+  toUrl,
   validate as validateAst,
   type DraftAST,
   type DraftCondition,
@@ -12,11 +14,13 @@ import {
   type ValidAST,
   type ValidationError,
 } from '@dql-kit/core'
-import { computed, isRef, ref, toRaw, type ComputedRef, type Ref } from 'vue'
+import { computed, isRef, ref, toRaw, watch, type ComputedRef, type Ref } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import type {
   FilterActions,
   LabelStatus,
   SearchSlot,
+  SyncMode,
   UseFilterOptions,
   UseFilterReturn,
 } from './types.ts'
@@ -45,16 +49,41 @@ const navigateParent = (
   return { parent: parent as DraftGroup, index: path[path.length - 1]! }
 }
 
+const queryValueAsString = (
+  raw: string | (string | null)[] | null | undefined,
+): string => {
+  if (typeof raw === 'string') return raw
+  return ''
+}
+
 export const useFilter = <S extends FilterSchema>(
   opts: UseFilterOptions<S>,
 ): UseFilterReturn<S> => {
+  const sync: SyncMode = opts.sync ?? 'none'
+  const queryKey = opts.queryKey ?? 'filter'
+
   const schemaRef: ComputedRef<S | undefined> = computed(() =>
     isRef(opts.schema)
       ? (opts.schema.value as S | undefined)
       : (opts.schema as S | undefined),
   )
 
+  const router = sync === 'url' ? useRouter() : undefined
+  const route = sync === 'url' ? useRoute() : undefined
+  if (sync === 'url' && (!router || !route)) {
+    throw new Error(
+      `[dql-kit/vue] useFilter({ sync: 'url' }) requires a vue-router context (no useRouter()/useRoute() available). Install vue-router and provide it via app.use(router), or use sync: 'none'.`,
+    )
+  }
+
   const initialDraft = (): DraftAST => {
+    if (route && schemaRef.value) {
+      const raw = queryValueAsString(route.query[queryKey])
+      if (raw.length > 0) {
+        const { ast } = fromUrl(raw, schemaRef.value)
+        return cloneDraft(ast) as DraftAST
+      }
+    }
     if (opts.initial) return cloneDraft(opts.initial) as DraftAST
     return emptyDraft()
   }
@@ -164,6 +193,39 @@ export const useFilter = <S extends FilterSchema>(
 
   const invalidateLabels = (_fieldKey?: string): void => {
     // No-op: async label cache lands in slice #7.
+  }
+
+  if (sync === 'url' && router && route) {
+    watch(
+      () => queryValueAsString(route.query[queryKey]),
+      (raw) => {
+        const s = schemaRef.value
+        if (!s) return
+        const currentEncoded = toUrl(valid.value)
+        if (currentEncoded === raw) return
+        if (raw.length === 0) {
+          if (draft.value.children.length > 0 || draft.value.combinator !== 'and') {
+            draft.value = emptyDraft()
+          }
+          return
+        }
+        const { ast } = fromUrl(raw, s)
+        draft.value = cloneDraft(ast) as DraftAST
+      },
+    )
+
+    watch(valid, (newVal) => {
+      const encoded = toUrl(newVal)
+      const cur = queryValueAsString(route.query[queryKey])
+      if (cur === encoded) return
+      const nextQuery: LocationQueryRaw = { ...route.query }
+      if (encoded.length === 0) {
+        delete nextQuery[queryKey]
+      } else {
+        nextQuery[queryKey] = encoded
+      }
+      void router.replace({ query: nextQuery })
+    })
   }
 
   return {
