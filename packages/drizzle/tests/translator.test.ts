@@ -149,3 +149,165 @@ describe('createDrizzleTranslator — SQL execution', () => {
     expect(() => t.toWhere(ast)).toThrow(/No SQL translator registered for op "noSuchOp"/)
   })
 })
+
+// Slice 3: full string op set against a fixture corpus that exercises
+// case-insensitivity, NULL/empty handling, and LIKE-pattern injection.
+const stringOpsTable = pgTable('string_ops_articles', {
+  id: serial('id').primaryKey(),
+  title: text('title'),
+})
+const stringSchema = defineFilterSchema({
+  fields: {
+    title: f.string(),
+  },
+})
+
+describe('createDrizzleTranslator — full string op coverage', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE string_ops_articles (
+        id SERIAL PRIMARY KEY,
+        title TEXT
+      );
+    `)
+    // Fixtures cover: simple words, mixed case, LIKE-special chars (%, _),
+    // backslash, NULL, and empty string. Note the SQL string 'foo\\bar' lands
+    // as the JS string `foo\bar` (single backslash) under default
+    // standard_conforming_strings=on.
+    await client.exec(`
+      INSERT INTO string_ops_articles (title) VALUES
+        ('hello'),
+        ('Hello World'),
+        ('world'),
+        ('foo%bar'),
+        ('foo_bar'),
+        ('foo\\bar'),
+        (''),
+        (NULL);
+    `)
+  })
+
+  // Plain code-point sort, deterministic regardless of host locale.
+  const titlesOf = (rows: Array<{ title: string | null }>) =>
+    rows
+      .map((r) => r.title)
+      .sort((a, b) => {
+        if (a === null) return -1
+        if (b === null) return 1
+        return a < b ? -1 : a > b ? 1 : 0
+      })
+
+  test('contains is case-insensitive (ILIKE)', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'contains', value: 'hello' }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    expect(titlesOf(rows)).toEqual(['Hello World', 'hello'])
+  })
+
+  test('notContains excludes matching rows but includes NULL behaviour as PG defines it', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'notContains', value: 'foo' }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    // Postgres: NOT ILIKE on NULL evaluates to NULL, so NULL rows are excluded.
+    // 'foo%bar' / 'foo_bar' / 'foo\bar' are all foo-prefixed → excluded.
+    // '', 'hello', 'Hello World', 'world' remain.
+    expect(titlesOf(rows)).toEqual(['', 'Hello World', 'hello', 'world'])
+  })
+
+  test('startsWith uses prefix LIKE pattern', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'startsWith', value: 'hello' }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    expect(titlesOf(rows)).toEqual(['Hello World', 'hello'])
+  })
+
+  test('endsWith uses suffix LIKE pattern', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'endsWith', value: 'world' }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    expect(titlesOf(rows)).toEqual(['Hello World', 'world'])
+  })
+
+  test('isEmpty matches NULL or empty string', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'isEmpty', value: undefined }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.title === null || r.title === '')).toBe(true)
+  })
+
+  test('in matches any value in the list', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'in', value: ['hello', 'world'] }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    expect(titlesOf(rows)).toEqual(['hello', 'world'])
+  })
+
+  test('notIn excludes the listed values', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'notIn', value: ['hello', 'world', 'Hello World'] }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    // NULL rows are excluded by NOT IN per PG semantics; '', and the three
+    // foo-prefixed rows survive.
+    expect(titlesOf(rows)).toEqual(['', 'foo%bar', 'foo\\bar', 'foo_bar'])
+  })
+
+  // LIKE-pattern injection coverage: a literal '%' / '_' / '\' in the search
+  // string must NOT be interpreted as a wildcard / escape.
+  test.each([
+    ['contains',   '%',   ['foo%bar']],
+    ['contains',   '_',   ['foo_bar']],
+    ['contains',   '\\',  ['foo\\bar']],
+    ['startsWith', 'foo%', ['foo%bar']],
+    ['startsWith', 'foo_', ['foo_bar']],
+    ['endsWith',   '%bar', ['foo%bar']],
+    ['endsWith',   '_bar', ['foo_bar']],
+  ])('LIKE-pattern char %s in op %s is treated literally', async (op, needle, expected) => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op, value: needle }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    expect(titlesOf(rows)).toEqual(expected)
+  })
+
+  test('contains with empty needle would otherwise match every non-NULL row (escape sanity)', async () => {
+    // Sanity check: escapeLike('') should produce '%%' which matches every
+    // non-NULL row. NULL rows are filtered out by ILIKE's NULL semantics.
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'contains', value: '' }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    expect(rows.every((r) => r.title !== null)).toBe(true)
+    expect(rows).toHaveLength(7)
+  })
+})

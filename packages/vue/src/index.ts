@@ -5,7 +5,12 @@ export {
   getFieldRenderer,
   fieldRendererRegistry,
 } from './registry.ts'
-export { StringInput, defaultRenderers } from './renderers.ts'
+export {
+  StringInput,
+  StringTokenInput,
+  defaultRenderers,
+  defaultListRenderers,
+} from './renderers.ts'
 export type {
   FieldRendererProps,
   FieldRendererRegistry,

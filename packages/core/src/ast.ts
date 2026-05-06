@@ -92,7 +92,14 @@ const validateCondition = (
   if (!op) {
     return [{ path, code: 'op_not_allowed', field: cond.field, op: cond.op }]
   }
-  if (op.valueShape === 'none') return []
+  if (op.valueShape === 'none') {
+    if (cond.value !== undefined) {
+      return [
+        { path, code: 'value_shape_mismatch', op: cond.op, expected: 'none' },
+      ]
+    }
+    return []
+  }
   if (cond.value === undefined) {
     return [{ path, code: 'incomplete', missing: 'value' }]
   }

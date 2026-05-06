@@ -1,7 +1,7 @@
-import { isGroup, type DraftCondition, type DraftGroup, type DraftNode, type FieldDef, type Label } from '@dql-kit/core'
+import { isGroup, type DraftCondition, type DraftGroup, type DraftNode, type FieldDef, type Label, type ValueShape } from '@dql-kit/core'
 import { computed, defineComponent, h, type PropType, type VNode } from 'vue'
 import { getFieldRenderer } from './registry.ts'
-import { defaultRenderers } from './renderers.ts'
+import { defaultListRenderers, defaultRenderers } from './renderers.ts'
 import type { UseFilterReturn, Variant } from './types.ts'
 
 const resolveLabel = (label: Label | undefined, fallback: string): string => {
@@ -9,8 +9,12 @@ const resolveLabel = (label: Label | undefined, fallback: string): string => {
   return typeof label === 'function' ? label() : label
 }
 
-const resolveRenderer = (typeId: string) =>
-  getFieldRenderer(typeId) ?? defaultRenderers[typeId]
+const resolveRenderer = (typeId: string, shape: ValueShape) => {
+  const override = getFieldRenderer(typeId)
+  if (override) return override
+  if (shape === 'list') return defaultListRenderers[typeId]
+  return defaultRenderers[typeId]
+}
 
 export const FilterBuilder = defineComponent({
   name: 'FilterBuilder',
@@ -39,7 +43,7 @@ export const FilterBuilder = defineComponent({
       const fieldDef = s && cond.field ? s.fields[cond.field] : undefined
       const ops = fieldDef?.ops ?? []
       const op = fieldDef && cond.op ? fieldDef.ops.find((o) => o.name === cond.op) : undefined
-      const renderer = fieldDef ? resolveRenderer(fieldDef.typeId) : undefined
+      const renderer = fieldDef && op ? resolveRenderer(fieldDef.typeId, op.valueShape) : undefined
 
       const fieldSelect = h(
         'select',

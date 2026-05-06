@@ -101,6 +101,57 @@ describe('fromUrl', () => {
     expect(result.dropped).toEqual([])
   })
 
+  test.each([
+    ['contains',    'hello world'],
+    ['notContains', 'foo'],
+    ['startsWith',  'foo'],
+    ['endsWith',    'bar'],
+  ])('round-trip lossless on string %s (single shape)', (op, v) => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op, value: v }],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test.each([
+    ['in',    ['a', 'b', 'c']],
+    ['notIn', ['x']],
+  ])('round-trip lossless on string %s (list shape, JSON array v)', (op, v) => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op, value: v }],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    expect(obj.n[0]).toEqual({ f: 'title', o: op, v })
+    expect(Array.isArray(obj.n[0].v)).toBe(true)
+    const result = fromUrl(url, schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on string in with empty array', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'in', value: [] }],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('string in with non-array v is dropped (value_shape_mismatch)', () => {
+    const compact = { c: 'and', n: [{ f: 'title', o: 'in', v: 'foo' }] }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, schema)
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
+    expect(result.ast.children).toHaveLength(0)
+  })
+
   test('round-trip lossless on isEmpty (none shape)', () => {
     const ast: ValidAST = {
       combinator: 'and',

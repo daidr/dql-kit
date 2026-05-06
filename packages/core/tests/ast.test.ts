@@ -180,6 +180,82 @@ describe('prune', () => {
     expect(out.children).toHaveLength(1)
     const cond = out.children[0] as { field: string, op: string, value: unknown }
     expect(cond.op).toBe('isEmpty')
+    expect(cond.value).toBeUndefined()
+  })
+
+  test('isEmpty op normalises stray value to undefined (lenient prune)', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'isEmpty', value: 'leftover' }],
+    }
+    const out = prune(draft, schema)
+    expect(out.children).toHaveLength(1)
+    const cond = out.children[0] as { field: string, op: string, value: unknown }
+    expect(cond.value).toBeUndefined()
+  })
+
+  test.each([
+    ['contains',    'foo'],
+    ['notContains', 'foo'],
+    ['startsWith',  'foo'],
+    ['endsWith',    'foo'],
+  ])('string %s with single string value is kept', (op, v) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op, value: v }],
+    }
+    const out = prune(draft, schema)
+    expect(out.children).toHaveLength(1)
+  })
+
+  test.each([
+    ['contains'],
+    ['startsWith'],
+    ['endsWith'],
+  ])('string %s with non-string value is dropped', (op) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op, value: 5 }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test.each([
+    ['in'],
+    ['notIn'],
+  ])('string %s keeps an array of strings', (op) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op, value: ['a', 'b'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test.each([
+    ['in'],
+    ['notIn'],
+  ])('string %s drops a non-array value (shape mismatch)', (op) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op, value: 'foo' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('string in drops an array containing a non-string element', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'in', value: ['a', 5] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('string in keeps an empty array (well-formed list shape)', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'in', value: [] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
   })
 })
 
@@ -254,6 +330,59 @@ describe('validate', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.errors[0]).toMatchObject({ code: 'value_shape_mismatch' })
+    }
+  })
+
+  test('reports value_shape_mismatch for "in" with non-array value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'in', value: 'foo' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]).toMatchObject({
+        code: 'value_shape_mismatch',
+        op: 'in',
+        expected: 'list',
+      })
+    }
+  })
+
+  test('reports value_shape_mismatch for "isEmpty" with stray value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'isEmpty', value: 'oops' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]).toMatchObject({
+        code: 'value_shape_mismatch',
+        op: 'isEmpty',
+        expected: 'none',
+      })
+    }
+  })
+
+  test('treats isEmpty without value as valid', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'isEmpty' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(true)
+  })
+
+  test('reports value_type_mismatch for string "in" with non-string array element', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'in', value: ['a', 5] }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]?.code).toBe('value_type_mismatch')
     }
   })
 
