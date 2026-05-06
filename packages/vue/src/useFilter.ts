@@ -1,47 +1,181 @@
-import { emptyDraft } from '@dql-kit/core'
-import type { FilterSchema } from '@dql-kit/core'
-import { computed, ref } from 'vue'
-import type { UseFilterOptions, UseFilterReturn } from './types.ts'
+import {
+  emptyAst,
+  emptyDraft,
+  isGroup,
+  prune as pruneAst,
+  validate as validateAst,
+  type DraftAST,
+  type DraftCondition,
+  type DraftGroup,
+  type DraftNode,
+  type FilterSchema,
+  type ValidAST,
+  type ValidationError,
+} from '@dql-kit/core'
+import { computed, isRef, ref, toRaw, type ComputedRef, type Ref } from 'vue'
+import type {
+  FilterActions,
+  LabelStatus,
+  SearchSlot,
+  UseFilterOptions,
+  UseFilterReturn,
+} from './types.ts'
 
-const NOT_IMPLEMENTED = (fn: string) => {
-  throw new Error(`[dql-kit/vue] ${fn}() is scaffolded; implementation pending.`)
+const cloneDraft = <T>(value: T): T => structuredClone(value)
+
+const navigate = (root: DraftGroup, path: number[]): DraftNode | null => {
+  let cur: DraftNode = root
+  for (const idx of path) {
+    if (!isGroup(cur)) return null
+    const group = cur as DraftGroup
+    const next: DraftNode | undefined = group.children[idx]
+    if (next === undefined) return null
+    cur = next
+  }
+  return cur
+}
+
+const navigateParent = (
+  root: DraftGroup,
+  path: number[],
+): { parent: DraftGroup, index: number } | null => {
+  if (path.length === 0) return null
+  const parent = navigate(root, path.slice(0, -1))
+  if (!parent || !isGroup(parent)) return null
+  return { parent: parent as DraftGroup, index: path[path.length - 1]! }
 }
 
 export const useFilter = <S extends FilterSchema>(
   opts: UseFilterOptions<S>,
 ): UseFilterReturn<S> => {
-  const schemaRef = computed(() =>
-    typeof opts.schema === 'object' && opts.schema !== null && 'value' in opts.schema
+  const schemaRef: ComputedRef<S | undefined> = computed(() =>
+    isRef(opts.schema)
       ? (opts.schema.value as S | undefined)
-      : (opts.schema as S),
+      : (opts.schema as S | undefined),
   )
 
-  const draft = ref(emptyDraft())
-  const search = ref({
+  const initialDraft = (): DraftAST => {
+    if (opts.initial) return cloneDraft(opts.initial) as DraftAST
+    return emptyDraft()
+  }
+
+  const draft = ref<DraftAST>(initialDraft()) as Ref<DraftAST>
+
+  const search = ref<SearchSlot>({
     fieldKey: null,
     query: '',
     loading: false,
     error: null,
     results: [],
-  } as UseFilterReturn['search']['value'])
+  })
+
+  const valid: ComputedRef<ValidAST> = computed(() => {
+    const s = schemaRef.value
+    if (!s) return emptyAst()
+    const plainDraft = cloneDraft(toRaw(draft.value))
+    return pruneAst(plainDraft, s)
+  })
+
+  const errors: ComputedRef<ValidationError[]> = computed(() => {
+    const s = schemaRef.value
+    if (!s) return []
+    const plainDraft = cloneDraft(toRaw(draft.value))
+    const result = validateAst(plainDraft, s)
+    return result.ok ? [] : result.errors
+  })
+
+  const mutate = (fn: (d: DraftAST) => void): void => {
+    const next = cloneDraft(toRaw(draft.value))
+    fn(next)
+    draft.value = next
+  }
+
+  const actions: FilterActions = {
+    addCondition(parentPath, condition) {
+      mutate((d) => {
+        const target =
+          parentPath.length === 0 ? d : (navigate(d, parentPath) as DraftGroup | null)
+        if (!target || !isGroup(target)) return
+        const next: DraftCondition = {
+          field: condition?.field ?? null,
+          op: condition?.op ?? null,
+        }
+        if (condition && 'value' in condition) {
+          next.value = condition.value
+        }
+        ;(target as DraftGroup).children.push(next)
+      })
+    },
+    removeNode(path) {
+      if (path.length === 0) return
+      mutate((d) => {
+        const located = navigateParent(d, path)
+        if (!located) return
+        located.parent.children.splice(located.index, 1)
+      })
+    },
+    updateNode(path, partial) {
+      mutate((d) => {
+        const node = navigate(d, path)
+        if (!node || isGroup(node)) return
+        const cond = node as DraftCondition
+        if ('field' in partial && partial.field !== undefined && partial.field !== cond.field) {
+          cond.field = partial.field
+          cond.op = null
+          delete cond.value
+        }
+        if ('op' in partial && partial.op !== undefined) {
+          cond.op = partial.op
+        }
+        if ('value' in partial) {
+          cond.value = partial.value
+        }
+      })
+    },
+    addGroup(parentPath, combinator = 'and') {
+      mutate((d) => {
+        const target =
+          parentPath.length === 0 ? d : (navigate(d, parentPath) as DraftGroup | null)
+        if (!target || !isGroup(target)) return
+        ;(target as DraftGroup).children.push({ combinator, children: [] })
+      })
+    },
+    setCombinator(path, combinator) {
+      mutate((d) => {
+        const node = path.length === 0 ? d : navigate(d, path)
+        if (!node || !isGroup(node)) return
+        ;(node as DraftGroup).combinator = combinator
+      })
+    },
+    clear() {
+      draft.value = emptyDraft()
+    },
+  }
+
+  const applyAst = (ast: ValidAST): void => {
+    draft.value = cloneDraft(ast) as DraftAST
+  }
+
+  const toJSON = (): ValidAST => valid.value
+
+  const labelOf = (_fieldKey: string, _id: string | number): LabelStatus => ({
+    status: 'pending',
+  })
+
+  const invalidateLabels = (_fieldKey?: string): void => {
+    // No-op: async label cache lands in slice #7.
+  }
 
   return {
     schema: schemaRef,
     draft,
-    valid:  computed(() => NOT_IMPLEMENTED('valid')),
-    errors: computed(() => NOT_IMPLEMENTED('errors')),
+    valid,
+    errors,
     search,
-    labelOf:          () => NOT_IMPLEMENTED('labelOf'),
-    actions: {
-      addCondition:   () => NOT_IMPLEMENTED('actions.addCondition'),
-      removeNode:     () => NOT_IMPLEMENTED('actions.removeNode'),
-      updateNode:     () => NOT_IMPLEMENTED('actions.updateNode'),
-      addGroup:       () => NOT_IMPLEMENTED('actions.addGroup'),
-      setCombinator:  () => NOT_IMPLEMENTED('actions.setCombinator'),
-      clear:          () => NOT_IMPLEMENTED('actions.clear'),
-    },
-    applyAst:         () => NOT_IMPLEMENTED('applyAst'),
-    toJSON:           () => NOT_IMPLEMENTED('toJSON'),
-    invalidateLabels: () => NOT_IMPLEMENTED('invalidateLabels'),
+    labelOf,
+    actions,
+    applyAst,
+    toJSON,
+    invalidateLabels,
   }
 }

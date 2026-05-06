@@ -6,9 +6,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun --filter '*' run build",
-    "type-check": "bun --filter '*' run type-check",
-    "test": "bun --filter '*' run test"
+    "build": "bun run --workspaces build",
+    "type-check": "bun run --workspaces type-check",
+    "test": "bun run --workspaces test"
   },
   "devDependencies": {
     "typescript": "^5.5.0"
