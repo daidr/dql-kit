@@ -1,0 +1,19 @@
+{
+  "name": "dql-kit",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bun --filter '*' run build",
+    "type-check": "bun --filter '*' run type-check",
+    "test": "bun --filter '*' run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules
+dist
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+bun.lock
+bun.lockb
+.idea
+.vscode
+*.log
+coverage
