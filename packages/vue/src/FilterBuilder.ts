@@ -89,9 +89,10 @@ export const FilterBuilder = defineComponent({
         : null
 
       const valueNode =
-        renderer && op && op.valueShape !== 'none' && cond.field && cond.op
+        renderer && op && fieldDef && op.valueShape !== 'none' && cond.field && cond.op
           ? h(renderer, {
               fieldKey: cond.field,
+              field: fieldDef,
               op: cond.op,
               value: cond.value,
               onUpdate: (v: unknown) =>

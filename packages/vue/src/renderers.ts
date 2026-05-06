@@ -1,13 +1,20 @@
+import type { FieldDef, Label } from '@dql-kit/core'
 import { computed, defineComponent, h, ref, type Component, type PropType } from 'vue'
 
 const baseProps = {
   fieldKey: { type: String, required: true as const },
+  field: { type: Object as PropType<FieldDef>, required: true as const },
   op: { type: String, required: true as const },
   value: { type: null as unknown as PropType<unknown>, default: undefined },
   onUpdate: {
     type: Function as PropType<(v: unknown) => void>,
     required: true as const,
   },
+}
+
+const labelText = (label: Label | undefined, fallback: string): string => {
+  if (label === undefined) return fallback
+  return typeof label === 'function' ? label() : label
 }
 
 export const StringInput = defineComponent({
@@ -157,9 +164,6 @@ export const NumberPairInput = defineComponent({
         if (!Number.isFinite(n)) return
         next[idx] = n
       }
-      // Emit either a fully-typed [number, number] tuple, or a tuple with
-      // nulls (which prune drops as a value_type_mismatch). This keeps the
-      // valid AST clean while letting the user fill the second input.
       props.onUpdate(next)
     }
 
@@ -275,9 +279,117 @@ export const NumberTokenInput = defineComponent({
   },
 })
 
+export const BooleanSwitch = defineComponent({
+  name: 'DqlBooleanSwitch',
+  props: baseProps,
+  setup(props) {
+    return () =>
+      h('input', {
+        type: 'checkbox',
+        role: 'switch',
+        class: 'dql-input dql-input--boolean',
+        'data-testid': 'boolean-switch',
+        checked: props.value === true,
+        onChange: (e: Event) => {
+          props.onUpdate((e.target as HTMLInputElement).checked)
+        },
+      })
+  },
+})
+
+export const EnumSelect = defineComponent({
+  name: 'DqlEnumSelect',
+  props: baseProps,
+  setup(props) {
+    const options = computed(() => props.field.enumValues ?? [])
+    return () =>
+      h(
+        'select',
+        {
+          class: 'dql-input dql-input--enum-single',
+          'data-testid': 'enum-select',
+          value:
+            props.value === undefined || props.value === null
+              ? ''
+              : String(props.value),
+          onChange: (e: Event) => {
+            const raw = (e.target as HTMLSelectElement).value
+            if (raw === '') {
+              props.onUpdate(undefined)
+              return
+            }
+            const match = options.value.find((o) => String(o.value) === raw)
+            if (match) props.onUpdate(match.value)
+          },
+        },
+        [
+          h('option', { value: '' }, '— select —'),
+          ...options.value.map((o) =>
+            h(
+              'option',
+              {
+                value: String(o.value),
+                'data-testid': `enum-option-${String(o.value)}`,
+              },
+              labelText(o.label, String(o.value)),
+            ),
+          ),
+        ],
+      )
+  },
+})
+
+export const EnumMultiSelect = defineComponent({
+  name: 'DqlEnumMultiSelect',
+  props: baseProps,
+  setup(props) {
+    const options = computed(() => props.field.enumValues ?? [])
+    const selected = computed<unknown[]>(() =>
+      Array.isArray(props.value) ? props.value.slice() : [],
+    )
+    const isSelected = (v: unknown) => selected.value.some((x) => x === v)
+    const toggle = (val: unknown) => {
+      const cur = selected.value
+      const idx = cur.findIndex((x) => x === val)
+      const next =
+        idx >= 0 ? [...cur.slice(0, idx), ...cur.slice(idx + 1)] : [...cur, val]
+      props.onUpdate(next)
+    }
+
+    return () =>
+      h(
+        'div',
+        {
+          class: 'dql-input dql-input--enum-multi',
+          'data-testid': 'enum-multi',
+        },
+        options.value.map((o) =>
+          h(
+            'label',
+            {
+              class: 'dql-enum-option',
+              'data-testid': `enum-multi-option-${String(o.value)}`,
+            },
+            [
+              h('input', {
+                type: 'checkbox',
+                class: 'dql-enum-checkbox',
+                checked: isSelected(o.value),
+                onChange: () => toggle(o.value),
+              }),
+              h('span', { class: 'dql-enum-label' }, labelText(o.label, String(o.value))),
+            ],
+          ),
+        ),
+      )
+  },
+})
+
 export const defaultRenderers: Readonly<Record<string, Component>> = Object.freeze({
   string: StringInput,
   number: NumberInput,
+  boolean: BooleanSwitch,
+  enum: EnumSelect,
 })
 
 export const defaultPairRenderers: Readonly<Record<string, Component>> = Object.freeze({
@@ -287,4 +399,5 @@ export const defaultPairRenderers: Readonly<Record<string, Component>> = Object.
 export const defaultListRenderers: Readonly<Record<string, Component>> = Object.freeze({
   string: StringTokenInput,
   number: NumberTokenInput,
+  enum: EnumMultiSelect,
 })

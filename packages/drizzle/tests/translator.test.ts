@@ -2,7 +2,7 @@ import { defineFilterSchema, f, type ValidAST } from '@dql-kit/core'
 import { PGlite } from '@electric-sql/pglite'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/pglite'
-import { pgTable, serial, text, integer } from 'drizzle-orm/pg-core'
+import { boolean, integer, pgTable, serial, text } from 'drizzle-orm/pg-core'
 import { beforeAll, describe, expect, test } from 'vitest'
 import { createDrizzleTranslator } from '../src/index.ts'
 
@@ -421,5 +421,164 @@ describe('createDrizzleTranslator — full number op coverage', () => {
     }
     const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
     expect(ratingsOf(rows)).toEqual([1, 2, 5])
+  })
+})
+
+// Slice 5: boolean + enum coverage. Enum is stored as TEXT (string
+// discriminant) and INTEGER (numeric discriminant) to assert that no
+// type coercion happens on the way through the translator.
+const enumOpsTable = pgTable('enum_ops_articles', {
+  id: serial('id').primaryKey(),
+  status: text('status').notNull(),
+  priority: integer('priority').notNull(),
+  isActive: boolean('isActive').notNull(),
+})
+const enumSchema = defineFilterSchema({
+  fields: {
+    status: f.enum(['draft', 'published', 'archived'] as const),
+    priority: f.enum([0, 1, 2] as const),
+    isActive: f.boolean(),
+  },
+})
+
+describe('createDrizzleTranslator — boolean + enum op coverage', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE enum_ops_articles (
+        id SERIAL PRIMARY KEY,
+        status TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        "isActive" BOOLEAN NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO enum_ops_articles (status, priority, "isActive") VALUES
+        ('draft',     0, true),
+        ('draft',     1, false),
+        ('published', 2, true),
+        ('published', 1, true),
+        ('archived',  0, false);
+    `)
+  })
+
+  test('boolean eq true matches active rows', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'isActive', op: 'eq', value: true }],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(3)
+    expect(rows.every((r) => r.isActive === true)).toBe(true)
+  })
+
+  test('boolean eq false matches inactive rows', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'isActive', op: 'eq', value: false }],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.isActive === false)).toBe(true)
+  })
+
+  test('string-enum eq with raw discriminant', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'eq', value: 'published' }],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.status === 'published')).toBe(true)
+  })
+
+  test('string-enum neq excludes the matched discriminant', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'neq', value: 'archived' }],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(4)
+    expect(rows.every((r) => r.status !== 'archived')).toBe(true)
+  })
+
+  test('string-enum in matches any of the listed discriminants', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'in', value: ['draft', 'archived'] }],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(3)
+    expect(rows.every((r) => r.status === 'draft' || r.status === 'archived')).toBe(true)
+  })
+
+  test('string-enum notIn excludes the listed discriminants', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'notIn', value: ['draft'] }],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(3)
+    expect(rows.every((r) => r.status !== 'draft')).toBe(true)
+  })
+
+  test('numeric-enum eq passes the number through to PG without stringification', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'priority', op: 'eq', value: 2 }],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.priority).toBe(2)
+  })
+
+  test('numeric-enum in / notIn', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const inRows = await db
+      .select()
+      .from(enumOpsTable)
+      .where(
+        t.toWhere({
+          combinator: 'and',
+          children: [{ field: 'priority', op: 'in', value: [0, 2] }],
+        }),
+      )
+    expect(inRows).toHaveLength(3)
+    const notInRows = await db
+      .select()
+      .from(enumOpsTable)
+      .where(
+        t.toWhere({
+          combinator: 'and',
+          children: [{ field: 'priority', op: 'notIn', value: [1] }],
+        }),
+      )
+    expect(notInRows).toHaveLength(3)
+    expect(notInRows.every((r) => r.priority !== 1)).toBe(true)
+  })
+
+  test('boolean + enum compose under AND', async () => {
+    const t = createDrizzleTranslator({ schema: enumSchema, table: enumOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'isActive', op: 'eq', value: true },
+        { field: 'status', op: 'in', value: ['draft', 'published'] },
+      ],
+    }
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(3)
+    expect(rows.every((r) => r.isActive && (r.status === 'draft' || r.status === 'published'))).toBe(true)
   })
 })

@@ -1,5 +1,6 @@
 import type {
   DraftAST,
+  FieldDef,
   FilterSchema,
   Item,
   ValidAST,
@@ -55,6 +56,7 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
 
 export type FieldRendererProps = {
   fieldKey: string
+  field: FieldDef
   op: string
   value: unknown
   onUpdate: (value: unknown) => void

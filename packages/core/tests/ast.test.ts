@@ -16,6 +16,8 @@ const schema = defineFilterSchema({
     rating: f.number({ label: 'Rating' }),
     status: f.enum(['draft', 'published'] as const, { label: 'Status' }),
     tags: f.array(f.string()),
+    isActive: f.boolean({ label: 'Active' }),
+    priority: f.enum([0, 1, 2] as const, { label: 'Priority' }),
   },
 })
 
@@ -325,6 +327,62 @@ describe('prune', () => {
     }
     expect(prune(draft, schema).children).toHaveLength(0)
   })
+
+  test.each([true, false])('boolean eq with %p is kept', (v) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'isActive', op: 'eq', value: v }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('boolean eq with non-boolean value is dropped', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'isActive', op: 'eq', value: 'true' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('enum eq drops a value not in the declared list', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'eq', value: 'archived' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('numeric enum keeps a known numeric value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'priority', op: 'eq', value: 1 }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('numeric enum drops an unknown numeric value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'priority', op: 'eq', value: 9 }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('enum in keeps a list of known values', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'in', value: ['draft', 'published'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('enum in drops a list containing an unknown value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'in', value: ['draft', 'archived'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
 })
 
 describe('validate', () => {
@@ -479,6 +537,21 @@ describe('validate', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.errors[0]?.code).toBe('value_type_mismatch')
+    }
+  })
+
+  test('reports value_type_mismatch for unknown enum value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'status', op: 'eq', value: 'archived' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]).toMatchObject({
+        code: 'value_type_mismatch',
+        expected: 'enum',
+      })
     }
   })
 

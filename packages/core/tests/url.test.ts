@@ -14,7 +14,9 @@ const schema = defineFilterSchema({
     title: f.string(),
     rating: f.number(),
     status: f.enum(['draft', 'published'] as const),
+    priority: f.enum([0, 1, 2] as const),
     tags: f.array(f.string()),
+    isActive: f.boolean(),
   },
 })
 
@@ -187,6 +189,59 @@ describe('fromUrl', () => {
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
     expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
+  })
+
+  test.each([true, false])('round-trip lossless on boolean eq with %p', (v) => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'isActive', op: 'eq', value: v }],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    expect(typeof obj.n[0].v).toBe('boolean')
+    const result = fromUrl(url, schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on string-enum and numeric-enum literals', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'status', op: 'eq', value: 'draft' },
+        { field: 'priority', op: 'eq', value: 2 },
+      ],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    // Discriminants stay in their original JSON type — strings stay strings,
+    // numbers stay numbers (no coercion via toString).
+    expect(obj.n[0].v).toBe('draft')
+    expect(typeof obj.n[1].v).toBe('number')
+    const result = fromUrl(url, schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('enum in / notIn round-trip preserves the discriminant array', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'status', op: 'in', value: ['draft', 'published'] },
+        { field: 'priority', op: 'notIn', value: [0, 1] },
+      ],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('decoded enum value not in declared list is dropped (value_type_mismatch)', () => {
+    const compact = { c: 'and', n: [{ f: 'status', o: 'eq', v: 'archived' }] }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, schema)
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
   })
 
   test('round-trip lossless on isEmpty (none shape)', () => {

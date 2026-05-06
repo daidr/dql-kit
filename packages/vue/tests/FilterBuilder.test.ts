@@ -7,6 +7,12 @@ const schema = defineFilterSchema({
   fields: {
     title: f.string({ label: 'Title' }),
     rating: f.number({ label: 'Rating' }),
+    isActive: f.boolean({ label: 'Active' }),
+    status: f.enum(['draft', 'published', 'archived'] as const, {
+      label: 'Status',
+      valueLabels: { draft: '草稿', published: '已发布', archived: '归档' },
+    }),
+    priority: f.enum([0, 1, 2] as const, { label: 'Priority' }),
   },
 })
 
@@ -343,5 +349,183 @@ describe('FilterBuilder — number renderers', () => {
       op: 'in',
       value: [1],
     })
+  })
+})
+
+describe('FilterBuilder — boolean renderer', () => {
+  it('renders a switch-role checkbox for boolean eq', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'isActive', op: 'eq', value: false }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const sw = wrapper.find('[data-testid="boolean-switch"]')
+    expect(sw.exists()).toBe(true)
+    expect(sw.attributes('role')).toBe('switch')
+    expect((sw.element as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('toggling the switch drives valid to true / false', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'isActive', op: 'eq', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const sw = wrapper.find('[data-testid="boolean-switch"]')
+    await sw.setValue(true)
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'isActive',
+      op: 'eq',
+      value: true,
+    })
+    await sw.setValue(false)
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'isActive',
+      op: 'eq',
+      value: false,
+    })
+  })
+})
+
+describe('FilterBuilder — enum renderers', () => {
+  it('renders EnumSelect with one option per declared value plus a placeholder', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'status', op: 'eq', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const select = wrapper.find('[data-testid="enum-select"]')
+    expect(select.exists()).toBe(true)
+    const options = wrapper.findAll('[data-testid="enum-select"] option')
+    // 3 declared + 1 placeholder
+    expect(options).toHaveLength(4)
+  })
+
+  it('respects valueLabels when rendering option text', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'status', op: 'eq', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const draftOption = wrapper.find('[data-testid="enum-option-draft"]')
+    expect(draftOption.exists()).toBe(true)
+    expect(draftOption.text()).toBe('草稿')
+    expect(wrapper.find('[data-testid="enum-option-published"]').text()).toBe('已发布')
+    expect(wrapper.find('[data-testid="enum-option-archived"]').text()).toBe('归档')
+  })
+
+  it('selecting an option emits the raw discriminant (not the label)', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'status', op: 'eq', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const select = wrapper.find('[data-testid="enum-select"]')
+    await select.setValue('published')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'status',
+      op: 'eq',
+      value: 'published',
+    })
+  })
+
+  it('numeric-enum select emits a number, not its string form', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'priority', op: 'eq', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const select = wrapper.find('[data-testid="enum-select"]')
+    await select.setValue('1')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'priority',
+      op: 'eq',
+      value: 1,
+    })
+  })
+
+  it('renders EnumMultiSelect for enum in with one checkbox per declared value', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'status', op: 'in', value: ['draft'] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="enum-multi"]').exists()).toBe(true)
+    const draftBox = wrapper.find('[data-testid="enum-multi-option-draft"] input')
+    const publishedBox = wrapper.find('[data-testid="enum-multi-option-published"] input')
+    expect((draftBox.element as HTMLInputElement).checked).toBe(true)
+    expect((publishedBox.element as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('toggling a multi-select option emits an updated discriminant array', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'status', op: 'in', value: ['draft'] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper
+      .find('[data-testid="enum-multi-option-published"] input')
+      .setValue(true)
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'status',
+      op: 'in',
+      value: ['draft', 'published'],
+    })
+    await wrapper
+      .find('[data-testid="enum-multi-option-draft"] input')
+      .setValue(false)
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'status',
+      op: 'in',
+      value: ['published'],
+    })
+  })
+
+  it('numeric-enum multi-select preserves numeric typing in the emitted array', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'priority', op: 'in', value: [] as number[] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="enum-multi-option-2"] input').setValue(true)
+    const cond = filter.valid.value.children[0] as { value: unknown[] }
+    expect(cond.value).toEqual([2])
+    expect(typeof cond.value[0]).toBe('number')
   })
 })
