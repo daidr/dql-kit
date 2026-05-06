@@ -6,6 +6,7 @@ import { FilterBuilder, useFilter } from '../src/index.ts'
 const schema = defineFilterSchema({
   fields: {
     title: f.string({ label: 'Title' }),
+    rating: f.number({ label: 'Rating' }),
   },
 })
 
@@ -185,6 +186,162 @@ describe('FilterBuilder — vertical-stack variant', () => {
       field: 'title',
       op: 'in',
       value: ['a'],
+    })
+  })
+})
+
+describe('FilterBuilder — number renderers', () => {
+  it('renders a NumberInput for number-eq and emits numeric updates', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'eq', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('input.dql-input--number')
+    expect(input.exists()).toBe(true)
+    await input.setValue('42')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'rating',
+      op: 'eq',
+      value: 42,
+    })
+  })
+
+  it('NumberInput emits undefined when cleared (drops condition from valid)', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'eq', value: 5 }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('input.dql-input--number')
+    await input.setValue('')
+    expect(filter.valid.value.children).toHaveLength(0)
+  })
+
+  it('renders NumberPairInput (two number boxes, not a single slider) for between', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'between', value: [1, 5] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="pair-min"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="pair-max"]').exists()).toBe(true)
+    expect((wrapper.find('[data-testid="pair-min"]').element as HTMLInputElement).value).toBe('1')
+    expect((wrapper.find('[data-testid="pair-max"]').element as HTMLInputElement).value).toBe('5')
+  })
+
+  it('NumberPairInput updates either side independently', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'between', value: [1, 5] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="pair-min"]').setValue('2')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'rating',
+      op: 'between',
+      value: [2, 5],
+    })
+    await wrapper.find('[data-testid="pair-max"]').setValue('9')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'rating',
+      op: 'between',
+      value: [2, 9],
+    })
+  })
+
+  it('NumberPairInput drops from valid until both halves are populated', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'between', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="pair-min"]').setValue('3')
+    // Only one half filled → value_type_mismatch (null in tuple) → pruned out.
+    expect(filter.valid.value.children).toHaveLength(0)
+    await wrapper.find('[data-testid="pair-max"]').setValue('7')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'rating',
+      op: 'between',
+      value: [3, 7],
+    })
+  })
+
+  it('renders NumberTokenInput for number "in" with numeric chip values', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'in', value: [1, 2, 3] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const tokens = wrapper.findAll('[data-testid="token"]')
+    expect(tokens).toHaveLength(3)
+    expect(tokens.map((t) => t.find('.dql-token-text').text())).toEqual(['1', '2', '3'])
+  })
+
+  it('NumberTokenInput commits numeric tokens (not strings) on Enter', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'in', value: [1] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('[data-testid="token-input"]')
+    await input.setValue('42')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'rating',
+      op: 'in',
+      value: [1, 42],
+    })
+    const value = (filter.valid.value.children[0] as { value: unknown[] }).value
+    expect(value.every((v) => typeof v === 'number')).toBe(true)
+  })
+
+  it('NumberTokenInput rejects a non-numeric token (silent no-op)', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'in', value: [1] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('[data-testid="token-input"]')
+    await input.setValue('not-a-number')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'rating',
+      op: 'in',
+      value: [1],
     })
   })
 })

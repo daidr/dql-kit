@@ -257,6 +257,74 @@ describe('prune', () => {
     }
     expect(prune(draft, schema).children).toHaveLength(1)
   })
+
+  test.each([
+    ['eq',  3],
+    ['neq', 3],
+    ['gt',  3],
+    ['gte', 3],
+    ['lt',  3],
+    ['lte', 3],
+  ])('number %s with finite numeric value is kept', (op, v) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op, value: v }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('number eq drops a non-finite value (NaN, Infinity)', () => {
+    const draftNaN: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'eq', value: Number.NaN }],
+    }
+    expect(prune(draftNaN, schema).children).toHaveLength(0)
+    const draftInf: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'eq', value: Number.POSITIVE_INFINITY }],
+    }
+    expect(prune(draftInf, schema).children).toHaveLength(0)
+  })
+
+  test('number between keeps a length-2 numeric tuple', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [1, 5] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('number between drops a length-3 array (shape mismatch)', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [1, 2, 3] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('number between drops when an element is not numeric', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [1, 'oops'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('number in keeps a numeric array', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'in', value: [1, 2, 3] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('number in drops an array containing a non-number', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'in', value: [1, '2'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
 })
 
 describe('validate', () => {
@@ -378,6 +446,34 @@ describe('validate', () => {
     const draft: DraftAST = {
       combinator: 'and',
       children: [{ field: 'title', op: 'in', value: ['a', 5] }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]?.code).toBe('value_type_mismatch')
+    }
+  })
+
+  test('reports value_shape_mismatch for number "between" with non-tuple', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [1, 2, 3] }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]).toMatchObject({
+        code: 'value_shape_mismatch',
+        op: 'between',
+        expected: 'pair',
+      })
+    }
+  })
+
+  test('reports value_type_mismatch for number "between" with non-numeric element', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [1, 'x'] }],
     }
     const result = validate(draft, schema)
     expect(result.ok).toBe(false)

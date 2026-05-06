@@ -311,3 +311,115 @@ describe('createDrizzleTranslator — full string op coverage', () => {
     expect(rows).toHaveLength(7)
   })
 })
+
+// Slice 4: number Field full op coverage against a corpus of integer rows.
+const numberOpsTable = pgTable('number_ops_articles', {
+  id: serial('id').primaryKey(),
+  rating: integer('rating').notNull(),
+})
+const numberSchema = defineFilterSchema({
+  fields: {
+    rating: f.number(),
+  },
+})
+
+describe('createDrizzleTranslator — full number op coverage', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE number_ops_articles (
+        id SERIAL PRIMARY KEY,
+        rating INTEGER NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO number_ops_articles (rating) VALUES
+        (1), (2), (3), (4), (5);
+    `)
+  })
+
+  const ratingsOf = (rows: Array<{ rating: number }>) =>
+    rows.map((r) => r.rating).sort((a, b) => a - b)
+
+  test('eq matches the equal row', async () => {
+    const t = createDrizzleTranslator({ schema: numberSchema, table: numberOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'eq', value: 3 }],
+    }
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    expect(ratingsOf(rows)).toEqual([3])
+  })
+
+  test('neq excludes the equal row', async () => {
+    const t = createDrizzleTranslator({ schema: numberSchema, table: numberOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'neq', value: 3 }],
+    }
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    expect(ratingsOf(rows)).toEqual([1, 2, 4, 5])
+  })
+
+  test.each([
+    ['gt',  3, [4, 5]],
+    ['gte', 3, [3, 4, 5]],
+    ['lt',  3, [1, 2]],
+    ['lte', 3, [1, 2, 3]],
+  ])('comparison op %s with pivot 3', async (op, pivot, expected) => {
+    const t = createDrizzleTranslator({ schema: numberSchema, table: numberOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op, value: pivot }],
+    }
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    expect(ratingsOf(rows)).toEqual(expected)
+  })
+
+  test('between is inclusive on both ends (BETWEEN x AND y)', async () => {
+    const t = createDrizzleTranslator({ schema: numberSchema, table: numberOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [2, 4] }],
+    }
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    expect(ratingsOf(rows)).toEqual([2, 3, 4])
+  })
+
+  test('between with low > high yields no rows (PG BETWEEN semantics)', async () => {
+    const t = createDrizzleTranslator({ schema: numberSchema, table: numberOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [4, 2] }],
+    }
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(0)
+  })
+
+  test('in matches any of the listed values', async () => {
+    const t = createDrizzleTranslator({ schema: numberSchema, table: numberOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'in', value: [1, 3, 5] }],
+    }
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    expect(ratingsOf(rows)).toEqual([1, 3, 5])
+  })
+
+  test('between composes inside an OR group', async () => {
+    const t = createDrizzleTranslator({ schema: numberSchema, table: numberOpsTable })
+    const ast: ValidAST = {
+      combinator: 'or',
+      children: [
+        { field: 'rating', op: 'between', value: [1, 2] },
+        { field: 'rating', op: 'eq', value: 5 },
+      ],
+    }
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    expect(ratingsOf(rows)).toEqual([1, 2, 5])
+  })
+})

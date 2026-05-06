@@ -8,7 +8,11 @@ export {
 export {
   StringInput,
   StringTokenInput,
+  NumberInput,
+  NumberPairInput,
+  NumberTokenInput,
   defaultRenderers,
+  defaultPairRenderers,
   defaultListRenderers,
 } from './renderers.ts'
 export type {

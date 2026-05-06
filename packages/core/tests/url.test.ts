@@ -152,6 +152,43 @@ describe('fromUrl', () => {
     expect(result.ast.children).toHaveLength(0)
   })
 
+  test('round-trip lossless on number ops keeps numeric JSON typing', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'rating', op: 'eq',  value: 3 },
+        { field: 'rating', op: 'neq', value: 0 },
+        { field: 'rating', op: 'gt',  value: 1 },
+        { field: 'rating', op: 'gte', value: 2 },
+        { field: 'rating', op: 'lt',  value: 9 },
+        { field: 'rating', op: 'lte', value: 8 },
+        { field: 'rating', op: 'between', value: [1, 5] },
+        { field: 'rating', op: 'in',  value: [1, 2, 3] },
+      ],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    // No string coercion: numbers remain numbers in the wire JSON.
+    for (const child of obj.n) {
+      if (Array.isArray(child.v)) {
+        expect(child.v.every((x: unknown) => typeof x === 'number')).toBe(true)
+      } else {
+        expect(typeof child.v).toBe('number')
+      }
+    }
+    const result = fromUrl(url, schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('number between with length-3 array is dropped (value_shape_mismatch)', () => {
+    const compact = { c: 'and', n: [{ f: 'rating', o: 'between', v: [1, 2, 3] }] }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, schema)
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
+  })
+
   test('round-trip lossless on isEmpty (none shape)', () => {
     const ast: ValidAST = {
       combinator: 'and',
