@@ -1,5 +1,7 @@
 # dql-kit
 
+[English](./README.md) | [简体中文](./README_zhs.md)
+
 Type-safe, schema-driven filter / query AST library for dashboards.
 
 > **Status**: pre-1.0, not published to npm. Used in-tree by story-verse
