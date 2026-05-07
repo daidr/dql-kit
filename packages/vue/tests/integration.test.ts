@@ -184,6 +184,76 @@ describe('end-to-end: nested filter via actions → URL → pglite', () => {
   })
 })
 
+// Slice 11: schema-evolution end-to-end. Build an "old" URL by encoding
+// against a previous schema, mount useFilter against the "new" (narrower)
+// schema, and watch the dropped[] surface populate, the notice render,
+// and the user dismiss it.
+describe('end-to-end: schema evolution dropped[] flow', () => {
+  // "Old" schema as it would have looked when the URL was generated:
+  // includes a `legacyTag` field that's been removed since.
+  const oldSchema = defineFilterSchema({
+    fields: {
+      title: f.string(),
+      legacyTag: f.string(),
+    },
+  })
+  // Current schema (no legacyTag).
+  const newSchema = defineFilterSchema({
+    fields: {
+      title: f.string(),
+    },
+  })
+
+  it('loads an old URL → dropped populated → notice rendered → dismiss clears it', async () => {
+    // 1. Encode against the old schema.
+    const oldUrl = toUrl({
+      combinator: 'and',
+      children: [
+        { field: 'title', op: 'eq', value: 'kept' },
+        { field: 'legacyTag', op: 'eq', value: 'gone' },
+      ],
+    })
+
+    // 2. Boot useFilter against the new schema with the old URL as the
+    // initial AST shape (we feed it through fromUrl manually to exercise
+    // the same path as a real URL load — the sync='none' harness doesn't
+    // run the URL watcher, so populate dropped via the public surface).
+    const decoded = fromUrl(oldUrl, newSchema)
+    expect(decoded.dropped).toHaveLength(1)
+    expect(decoded.dropped[0]).toMatchObject({
+      reason: 'unknown_field',
+      detail: { field: 'legacyTag' },
+    })
+    void oldSchema // referenced for documentation; the encoder is the contract.
+
+    const filter = useFilter({
+      schema: newSchema,
+      sync: 'none',
+      initial: decoded.ast,
+    })
+    filter.dropped.value = decoded.dropped
+
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+
+    // 3. Notice renders with the right count.
+    const notice = wrapper.find('[data-testid="dropped-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.attributes('data-dropped-count')).toBe('1')
+    expect(notice.text()).toContain('1 condition(s) dropped due to schema changes')
+
+    // 4. The surviving condition still shows in the UI.
+    expect(filter.valid.value).toEqual({
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'kept' }],
+    })
+
+    // 5. User clicks dismiss — notice unmounts, dropped is empty.
+    await wrapper.find('[data-testid="dropped-dismiss"]').trigger('click')
+    expect(filter.dropped.value).toEqual([])
+    expect(wrapper.find('[data-testid="dropped-notice"]').exists()).toBe(false)
+  })
+})
+
 // Slice 10: drive each of the 5 error codes through the composable and
 // assert the UI reflects the right code on the right row, then watch the
 // indicator clear reactively as the user fixes each issue.

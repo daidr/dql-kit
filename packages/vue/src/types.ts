@@ -1,5 +1,6 @@
 import type {
   DraftAST,
+  DroppedNode,
   FieldDef,
   FilterSchema,
   Item,
@@ -50,6 +51,12 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   draft: Ref<DraftAST>
   valid: ComputedRef<ValidAST>
   errors: ComputedRef<ValidationError[]>
+  // Nodes dropped by the URL codec on schema mismatch. Populated when
+  // useFilter loads from a route query that referenced fields/ops/types
+  // the current schema no longer honours, or rebuilt on URL changes.
+  // `dismissDropped()` clears it (UI-side acknowledgement).
+  dropped: Ref<DroppedNode[]>
+  dismissDropped: () => void
   search: Ref<SearchSlot>
   labelOf: (fieldKey: string, id: string | number) => LabelStatus
   actions: FilterActions

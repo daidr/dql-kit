@@ -203,3 +203,56 @@ describe('useFilter — sync: \'url\' without router context', () => {
     expect(() => mount(Harness)).toThrow(/vue-router context/)
   })
 })
+
+// Slice 11: schema-evolution dropped[] surface. The harness above uses a
+// schema with only `title`, so a URL referencing other field/op/type
+// combos lands in dropped[].
+describe('useFilter — dropped[] schema evolution', () => {
+  it('initial state has dropped: [] when the URL is clean', async () => {
+    const { filter, wrapper } = await buildHarness({ sync: 'url' })
+    expect(filter.dropped.value).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('initial state populates dropped[] when URL references an unknown field', async () => {
+    // Construct a URL by hand — `mystery` is not in the schema.
+    const compact = { c: 'and', n: [{ f: 'mystery', o: 'eq', v: 'x' }] }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const { filter, wrapper } = await buildHarness({
+      sync: 'url',
+      initialPath: `/?filter=${url}`,
+    })
+    expect(filter.dropped.value).toHaveLength(1)
+    expect(filter.dropped.value[0]).toMatchObject({
+      reason: 'unknown_field',
+      detail: { field: 'mystery' },
+    })
+    expect(filter.valid.value.children).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('dismissDropped() clears the array reactively', async () => {
+    const compact = { c: 'and', n: [{ f: 'mystery', o: 'eq', v: 'x' }] }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const { filter, wrapper } = await buildHarness({
+      sync: 'url',
+      initialPath: `/?filter=${url}`,
+    })
+    expect(filter.dropped.value.length).toBeGreaterThan(0)
+    filter.dismissDropped()
+    expect(filter.dropped.value).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('navigation to a stale URL repopulates dropped[]', async () => {
+    const { filter, router, wrapper } = await buildHarness({ sync: 'url' })
+    expect(filter.dropped.value).toEqual([])
+    const compact = { c: 'and', n: [{ f: 'mystery', o: 'eq', v: 'x' }] }
+    const stale = encodeURIComponent(JSON.stringify(compact))
+    await router.push({ query: { filter: stale } })
+    await flushPromises()
+    expect(filter.dropped.value).toHaveLength(1)
+    expect(filter.dropped.value[0]?.reason).toBe('unknown_field')
+    wrapper.unmount()
+  })
+})

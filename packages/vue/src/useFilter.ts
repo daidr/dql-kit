@@ -10,6 +10,7 @@ import {
   type DraftCondition,
   type DraftGroup,
   type DraftNode,
+  type DroppedNode,
   type FilterSchema,
   type ValidAST,
   type ValidNode,
@@ -77,11 +78,14 @@ export const useFilter = <S extends FilterSchema>(
     )
   }
 
+  const dropped: Ref<DroppedNode[]> = ref([])
+
   const initialDraft = (): DraftAST => {
     if (route && schemaRef.value) {
       const raw = queryValueAsString(route.query[queryKey])
       if (raw.length > 0) {
-        const { ast } = fromUrl(raw, schemaRef.value)
+        const { ast, dropped: d } = fromUrl(raw, schemaRef.value)
+        if (d.length > 0) dropped.value = d
         return cloneDraft(ast) as DraftAST
       }
     }
@@ -272,7 +276,8 @@ export const useFilter = <S extends FilterSchema>(
           }
           return
         }
-        const { ast } = fromUrl(raw, s)
+        const { ast, dropped: d } = fromUrl(raw, s)
+        if (d.length > 0) dropped.value = d
         draft.value = cloneDraft(ast) as DraftAST
       },
     )
@@ -291,11 +296,17 @@ export const useFilter = <S extends FilterSchema>(
     })
   }
 
+  const dismissDropped = (): void => {
+    dropped.value = []
+  }
+
   return {
     schema: schemaRef,
     draft,
     valid,
     errors,
+    dropped,
+    dismissDropped,
     search,
     labelOf,
     actions,

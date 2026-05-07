@@ -1282,3 +1282,47 @@ describe('FilterBuilder — validation error indicators', () => {
     ).toBe('unknown_field')
   })
 })
+
+describe('FilterBuilder — dropped[] schema-evolution notice', () => {
+  it('hides the notice when dropped is empty', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="dropped-notice"]').exists()).toBe(false)
+  })
+
+  it('renders a dismissible notice with the count when dropped is non-empty', async () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    // Force-populate the dropped surface (the URL flow normally drives this;
+    // for unit-level rendering we mutate it directly).
+    filter.dropped.value = [
+      { path: [0], reason: 'unknown_field', detail: { field: 'mystery' } },
+      { path: [1], reason: 'value_type_mismatch', detail: { field: 'rating' } },
+    ]
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const notice = wrapper.find('[data-testid="dropped-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.attributes('role')).toBe('alert')
+    expect(notice.attributes('data-dropped-count')).toBe('2')
+    expect(notice.text()).toContain('2 condition(s) dropped due to schema changes')
+    // Dismiss button clears the notice reactively.
+    await wrapper.find('[data-testid="dropped-dismiss"]').trigger('click')
+    expect(filter.dropped.value).toEqual([])
+    expect(wrapper.find('[data-testid="dropped-notice"]').exists()).toBe(false)
+  })
+
+  it('updates the count when dropped is mutated externally', async () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.dropped.value = [
+      { path: [0], reason: 'unknown_field' },
+    ]
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="dropped-notice"]').attributes('data-dropped-count')).toBe('1')
+    filter.dropped.value = [
+      { path: [0], reason: 'unknown_field' },
+      { path: [1], reason: 'op_not_allowed' },
+      { path: [2], reason: 'value_type_mismatch' },
+    ]
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="dropped-notice"]').attributes('data-dropped-count')).toBe('3')
+  })
+})

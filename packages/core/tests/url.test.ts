@@ -365,6 +365,57 @@ describe('fromUrl', () => {
     expect(result.dropped).toEqual([])
   })
 
+  test('schema evolution: op no longer allowed yields op_not_allowed in dropped[]', () => {
+    // Original schema allowed string-eq on `title`; pretend the user once
+    // typed-narrowed it via withOps and removed `eq`. We model it by
+    // decoding a fresh URL against a schema where `title.ops` excludes 'eq'.
+    const narrowedSchema = defineFilterSchema({
+      fields: {
+        title: f.custom({ typeId: 'string', ops: [] }),
+      },
+    })
+    const compact = { c: 'and', n: [{ f: 'title', o: 'eq', v: 'hello' }] }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, narrowedSchema)
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]).toMatchObject({
+      reason: 'op_not_allowed',
+      detail: { field: 'title', op: 'eq' },
+    })
+    // Path must point at the offending node so a UI can render context.
+    expect(result.dropped[0]?.path).toEqual([0])
+    expect(result.ast.children).toHaveLength(0)
+  })
+
+  test('schema evolution: each dropped entry includes a path indexing into the decoded tree', () => {
+    const compact = {
+      c: 'and',
+      n: [
+        { f: 'title', o: 'eq', v: 'kept' },
+        // Removed field: dropped at [1] in the linear root layout.
+        { f: 'mystery', o: 'eq', v: 'x' },
+        // Type changed elsewhere: dropped at [2].
+        { f: 'rating', o: 'eq', v: 'not-a-number' },
+      ],
+    }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, schema)
+    expect(result.dropped).toEqual([
+      {
+        path: [1],
+        reason: 'unknown_field',
+        detail: { field: 'mystery' },
+      },
+      {
+        path: [2],
+        reason: 'value_type_mismatch',
+        detail: { field: 'rating', op: 'eq' },
+      },
+    ])
+    // Surviving condition makes it through unchanged.
+    expect(result.ast.children).toHaveLength(1)
+  })
+
   test('decoded array<U> with mixed-type elements is dropped (value_type_mismatch)', () => {
     const compact = {
       c: 'and',

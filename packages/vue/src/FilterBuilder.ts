@@ -258,14 +258,49 @@ export const FilterBuilder = defineComponent({
       )
     }
 
-    return () =>
-      h(
+    return () => {
+      // Schema-evolution notice. Library carries no localised strings —
+      // the count is exposed via data-dropped-count so consumer CSS / JS
+      // can swap the message. The default English copy matches DESIGN.md
+      // Q10 ("dropped due to schema changes").
+      const droppedNotice =
+        props.filter.dropped.value.length > 0
+          ? h(
+              'div',
+              {
+                class: 'dql-dropped-notice',
+                'data-testid': 'dropped-notice',
+                'data-dropped-count': String(props.filter.dropped.value.length),
+                role: 'alert',
+              },
+              [
+                h(
+                  'span',
+                  { class: 'dql-dropped-message' },
+                  `${props.filter.dropped.value.length} condition(s) dropped due to schema changes`,
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'dql-dropped-dismiss',
+                    'data-testid': 'dropped-dismiss',
+                    onClick: () => props.filter.dismissDropped(),
+                  },
+                  'Dismiss',
+                ),
+              ],
+            )
+          : null
+
+      return h(
         'div',
         {
           class: ['dql-filter-builder', `dql-variant-${props.variant}`],
           'data-testid': 'filter-builder',
         },
-        [renderGroup(draft.value, [])],
+        [droppedNotice, renderGroup(draft.value, [])].filter(Boolean) as VNode[],
       )
+    }
   },
 })
