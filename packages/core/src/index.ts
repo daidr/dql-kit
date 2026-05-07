@@ -10,3 +10,4 @@ export {
   isCondition,
 } from './ast.ts'
 export { COMPACT_KEYS, toUrl, fromUrl } from './url.ts'
+export { RELATIVE_UNITS, isRelativeUnit, type RelativeUnit } from './check.ts'

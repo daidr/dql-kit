@@ -18,6 +18,8 @@ const schema = defineFilterSchema({
     tags: f.array(f.string()),
     isActive: f.boolean({ label: 'Active' }),
     priority: f.enum([0, 1, 2] as const, { label: 'Priority' }),
+    publishedOn: f.date({ label: 'Published on' }),
+    occurredAt: f.datetime({ label: 'Occurred at' }),
   },
 })
 
@@ -380,6 +382,128 @@ describe('prune', () => {
     const draft: DraftAST = {
       combinator: 'and',
       children: [{ field: 'status', op: 'in', value: ['draft', 'archived'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test.each([
+    ['eq',     '2026-05-01'],
+    ['before', '2026-05-01'],
+    ['after',  '2026-05-01'],
+  ])('date %s with ISO calendar value is kept', (op, v) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'publishedOn', op, value: v }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('date eq drops a non-ISO-calendar string', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'publishedOn', op: 'eq', value: '05/01/2026' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('date eq drops a datetime instant string (wrong field type)', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'publishedOn', op: 'eq', value: '2026-05-01T10:30:00Z' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('date between with a length-2 calendar tuple is kept', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        { field: 'publishedOn', op: 'between', value: ['2026-05-01', '2026-05-31'] },
+      ],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test.each([
+    ['before', '2026-05-01T10:30:00Z'],
+    ['after',  '2026-05-01T10:30:00Z'],
+  ])('datetime %s with ISO instant is kept', (op, v) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op, value: v }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('datetime between with two ISO instants is kept', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'occurredAt',
+          op: 'between',
+          value: ['2026-05-01T00:00:00Z', '2026-05-31T23:59:59Z'],
+        },
+      ],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('datetime before drops a non-parseable value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'before', value: 'not-a-date' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test.each([
+    ['minute'],
+    ['hour'],
+    ['day'],
+    ['week'],
+    ['month'],
+  ])('datetime inLast with unit %s is kept', (unit) => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        { field: 'occurredAt', op: 'inLast', value: { amount: 7, unit } },
+      ],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('datetime inLast drops an unsupported unit (year)', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'year' } }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('datetime inLast drops a non-positive amount', () => {
+    const zero: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 0, unit: 'day' } }],
+    }
+    expect(prune(zero, schema).children).toHaveLength(0)
+    const negative: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'inLast', value: { amount: -1, unit: 'day' } }],
+    }
+    expect(prune(negative, schema).children).toHaveLength(0)
+  })
+
+  test('datetime inLast rejects SQL-injection-shaped unit', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'occurredAt',
+          op: 'inLast',
+          value: { amount: 1, unit: "day' OR '1'='1" },
+        },
+      ],
     }
     expect(prune(draft, schema).children).toHaveLength(0)
   })

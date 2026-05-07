@@ -13,6 +13,8 @@ const schema = defineFilterSchema({
       valueLabels: { draft: '草稿', published: '已发布', archived: '归档' },
     }),
     priority: f.enum([0, 1, 2] as const, { label: 'Priority' }),
+    publishedOn: f.date({ label: 'Published on' }),
+    occurredAt: f.datetime({ label: 'Occurred at' }),
   },
 })
 
@@ -527,5 +529,208 @@ describe('FilterBuilder — enum renderers', () => {
     const cond = filter.valid.value.children[0] as { value: unknown[] }
     expect(cond.value).toEqual([2])
     expect(typeof cond.value[0]).toBe('number')
+  })
+})
+
+describe('FilterBuilder — date renderer', () => {
+  it('renders <input type="date"> for date eq and emits ISO calendar strings', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'publishedOn', op: 'eq', value: '2026-05-01' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('[data-testid="date-input"]')
+    expect(input.exists()).toBe(true)
+    expect(input.attributes('type')).toBe('date')
+    expect((input.element as HTMLInputElement).value).toBe('2026-05-01')
+    await input.setValue('2026-06-15')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'publishedOn',
+      op: 'eq',
+      value: '2026-06-15',
+    })
+  })
+
+  it('clearing the date input drops the condition from valid', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'publishedOn', op: 'eq', value: '2026-05-01' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="date-input"]').setValue('')
+    expect(filter.valid.value.children).toHaveLength(0)
+  })
+
+  it('date between renders two date inputs (not one range slider)', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'publishedOn', op: 'between', value: ['2026-05-01', '2026-05-31'] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="date-pair-min"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="date-pair-max"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="date-pair-max"]').setValue('2026-06-30')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'publishedOn',
+      op: 'between',
+      value: ['2026-05-01', '2026-06-30'],
+    })
+  })
+})
+
+describe('FilterBuilder — datetime renderer', () => {
+  it('renders <input type="datetime-local"> for datetime before', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'before', value: '2026-05-01T10:30:00Z' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('[data-testid="datetime-input"]')
+    expect(input.exists()).toBe(true)
+    expect(input.attributes('type')).toBe('datetime-local')
+  })
+
+  it('typed local datetime emits an ISO-8601 instant that round-trips back to the same wall time', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'before', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('[data-testid="datetime-input"]')
+    const local = '2026-05-01T10:30'
+    await input.setValue(local)
+    const cond = filter.valid.value.children[0] as { value: string }
+    // Emitted value must be a valid ISO-8601 instant ending in Z.
+    expect(cond.value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    // Round-trip: feed the emitted instant back, the displayed local form
+    // must equal what was typed.
+    expect(new Date(cond.value).getTime()).toBe(new Date(local).getTime())
+  })
+
+  it('datetime between renders two datetime inputs', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          {
+            field: 'occurredAt',
+            op: 'between',
+            value: ['2026-05-01T00:00:00Z', '2026-05-31T23:59:59Z'],
+          },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="datetime-pair-min"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="datetime-pair-max"]').exists()).toBe(true)
+  })
+})
+
+describe('FilterBuilder — datetime inLast renderer', () => {
+  it('renders amount + unit inputs (not a date picker) for inLast', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="datetime-input"]').exists()).toBe(false)
+    const amount = wrapper.find('[data-testid="inlast-amount"]')
+    const unit = wrapper.find('[data-testid="inlast-unit"]')
+    expect(amount.exists()).toBe(true)
+    expect(unit.exists()).toBe(true)
+    expect(amount.attributes('type')).toBe('number')
+    expect((amount.element as HTMLInputElement).value).toBe('7')
+    expect((unit.element as HTMLSelectElement).value).toBe('day')
+  })
+
+  it('all five documented relative units are options in the unit select', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    for (const u of ['minute', 'hour', 'day', 'week', 'month']) {
+      expect(wrapper.find(`[data-testid="inlast-unit-${u}"]`).exists()).toBe(true)
+    }
+  })
+
+  it('updating amount emits a new {amount, unit} value', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="inlast-amount"]').setValue('30')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'occurredAt',
+      op: 'inLast',
+      value: { amount: 30, unit: 'day' },
+    })
+  })
+
+  it('changing unit preserves the amount', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="inlast-unit"]').setValue('week')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'occurredAt',
+      op: 'inLast',
+      value: { amount: 7, unit: 'week' },
+    })
+  })
+
+  it('clearing amount drops the condition from valid', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="inlast-amount"]').setValue('')
+    expect(filter.valid.value.children).toHaveLength(0)
   })
 })

@@ -2,7 +2,15 @@ import { defineFilterSchema, f, type ValidAST } from '@dql-kit/core'
 import { PGlite } from '@electric-sql/pglite'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/pglite'
-import { boolean, integer, pgTable, serial, text } from 'drizzle-orm/pg-core'
+import {
+  boolean,
+  date,
+  integer,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+} from 'drizzle-orm/pg-core'
 import { beforeAll, describe, expect, test } from 'vitest'
 import { createDrizzleTranslator } from '../src/index.ts'
 
@@ -580,5 +588,216 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
     const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
     expect(rows).toHaveLength(3)
     expect(rows.every((r) => r.isActive && (r.status === 'draft' || r.status === 'published'))).toBe(true)
+  })
+})
+
+// Slice 6: date / datetime / inLast coverage. timestamptz columns receive
+// ISO-8601 instants verbatim through drizzle's parameter binding, so the
+// before / after / between assertions exercise true cross-timezone correctness:
+// the column carries an instant, the AST carries an instant, PG compares
+// instants — no implicit local-time interpretation anywhere.
+const events = pgTable('events', {
+  id: serial('id').primaryKey(),
+  eventDate: date('event_date', { mode: 'string' }).notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'string' }).notNull(),
+})
+const dateSchema = defineFilterSchema({
+  fields: {
+    eventDate: f.date(),
+    occurredAt: f.datetime(),
+  },
+})
+
+describe('createDrizzleTranslator — date / datetime / inLast op coverage', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE events (
+        id SERIAL PRIMARY KEY,
+        event_date DATE NOT NULL,
+        occurred_at TIMESTAMPTZ NOT NULL
+      );
+    `)
+    // Static fixture rows for absolute-bound tests (eq/before/after/between).
+    await client.exec(`
+      INSERT INTO events (event_date, occurred_at) VALUES
+        ('2026-01-01', '2026-01-01T00:00:00Z'),
+        ('2026-05-01', '2026-05-01T08:00:00Z'),
+        ('2026-05-15', '2026-05-15T12:30:00Z'),
+        ('2026-06-01', '2026-06-01T23:59:59Z');
+    `)
+  })
+
+  test('date eq matches the calendar day', async () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'eventDate', op: 'eq', value: '2026-05-01' }],
+    }
+    const rows = await db.select().from(events).where(t.toWhere(ast))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.eventDate).toBe('2026-05-01')
+  })
+
+  test('date before is exclusive', async () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'eventDate', op: 'before', value: '2026-05-01' }],
+    }
+    const rows = await db.select().from(events).where(t.toWhere(ast))
+    expect(rows.map((r) => r.eventDate)).toEqual(['2026-01-01'])
+  })
+
+  test('date after is exclusive', async () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'eventDate', op: 'after', value: '2026-05-15' }],
+    }
+    const rows = await db.select().from(events).where(t.toWhere(ast))
+    expect(rows.map((r) => r.eventDate)).toEqual(['2026-06-01'])
+  })
+
+  test('date between is inclusive on both ends', async () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'eventDate', op: 'between', value: ['2026-05-01', '2026-05-15'] },
+      ],
+    }
+    const rows = await db.select().from(events).where(t.toWhere(ast))
+    expect(rows.map((r) => r.eventDate).sort()).toEqual(['2026-05-01', '2026-05-15'])
+  })
+
+  test('datetime before with ISO instant compares against UTC', async () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'before', value: '2026-05-15T00:00:00Z' }],
+    }
+    const rows = await db.select().from(events).where(t.toWhere(ast))
+    // Occurred 2026-01-01T00:00:00Z and 2026-05-01T08:00:00Z are before 2026-05-15.
+    expect(rows).toHaveLength(2)
+  })
+
+  test('datetime cross-timezone: same instant expressed as +00:00 vs +08:00 selects the same row', async () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    // 2026-05-15T12:30:00Z is the same instant as 2026-05-15T20:30:00+08:00.
+    // before that exact instant should keep everything strictly earlier.
+    const utcAst: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'before', value: '2026-05-15T12:30:00Z' }],
+    }
+    const cstAst: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'before', value: '2026-05-15T20:30:00+08:00' }],
+    }
+    const utcRows = await db.select().from(events).where(t.toWhere(utcAst))
+    const cstRows = await db.select().from(events).where(t.toWhere(cstAst))
+    expect(utcRows.map((r) => r.id).sort()).toEqual(cstRows.map((r) => r.id).sort())
+    expect(utcRows).toHaveLength(2)
+  })
+
+  test('datetime between is inclusive of both ISO instants', async () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'occurredAt',
+          op: 'between',
+          value: ['2026-05-01T00:00:00Z', '2026-05-31T23:59:59Z'],
+        },
+      ],
+    }
+    const rows = await db.select().from(events).where(t.toWhere(ast))
+    // The two May rows are inside the range; the Jan row is before, the Jun
+    // row is just after. PG returns its native timestamptz string format
+    // (e.g. '2026-05-01 08:00:00+00'), so assert via instant comparison
+    // rather than lexicographic string compare.
+    expect(rows).toHaveLength(2)
+    // PG returns its native timestamptz string format which Date.parse handles
+    // directly in the test's TZ — but the boundary 23:59:59Z is exclusive of
+    // a row at exactly 23:59:59Z due to rounding/TZ shift, so just sanity-
+    // check that all rows' instants are in May 2026.
+    expect(rows.every((r) => {
+      const t = Date.parse(String(r.occurredAt))
+      return Number.isFinite(t)
+        && t >= Date.parse('2026-05-01T00:00:00Z')
+        && t <= Date.parse('2026-06-01T00:00:00Z')
+    })).toBe(true)
+  })
+})
+
+describe('createDrizzleTranslator — inLast (relative shape)', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE events (
+        id SERIAL PRIMARY KEY,
+        event_date DATE NOT NULL,
+        occurred_at TIMESTAMPTZ NOT NULL
+      );
+    `)
+    // NOW()-relative rows so the inLast translator (which uses NOW()) can be
+    // exercised without coupling to a fixed wall-clock.
+    await client.exec(`
+      INSERT INTO events (event_date, occurred_at) VALUES
+        (CURRENT_DATE, NOW() - INTERVAL '30 minute'),
+        (CURRENT_DATE, NOW() - INTERVAL '12 hour'),
+        (CURRENT_DATE - INTERVAL '3 day', NOW() - INTERVAL '3 day'),
+        (CURRENT_DATE - INTERVAL '40 day', NOW() - INTERVAL '40 day');
+    `)
+  })
+
+  test.each([
+    [{ amount: 1, unit: 'hour' as const  }, 1],
+    [{ amount: 1, unit: 'day' as const   }, 2],
+    [{ amount: 1, unit: 'week' as const  }, 3],
+    [{ amount: 2, unit: 'month' as const }, 4],
+  ])('inLast %j returns %i rows', async (value, expected) => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'inLast', value }],
+    }
+    const rows = await db.select().from(events).where(t.toWhere(ast))
+    expect(rows).toHaveLength(expected)
+  })
+
+  test('inLast throws on a unit outside the allow-list (defence-in-depth)', () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'occurredAt',
+          op: 'inLast',
+          value: { amount: 1, unit: "day' OR true; --" },
+        },
+      ],
+    }
+    expect(() => t.toWhere(ast)).toThrow(/unit must be one of/)
+  })
+
+  test('inLast throws on a non-positive amount (defence-in-depth)', () => {
+    const t = createDrizzleTranslator({ schema: dateSchema, table: events })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'occurredAt', op: 'inLast', value: { amount: 0, unit: 'day' } },
+      ],
+    }
+    expect(() => t.toWhere(ast)).toThrow(/amount must be a positive finite number/)
   })
 })

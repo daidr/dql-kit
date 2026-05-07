@@ -17,6 +17,8 @@ const schema = defineFilterSchema({
     priority: f.enum([0, 1, 2] as const),
     tags: f.array(f.string()),
     isActive: f.boolean(),
+    publishedOn: f.date(),
+    occurredAt: f.datetime(),
   },
 })
 
@@ -242,6 +244,86 @@ describe('fromUrl', () => {
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
     expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
+  })
+
+  test('round-trip lossless on date eq + before + after with ISO calendar values', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'publishedOn', op: 'eq',     value: '2026-05-01' },
+        { field: 'publishedOn', op: 'before', value: '2026-06-01' },
+        { field: 'publishedOn', op: 'after',  value: '2026-04-01' },
+      ],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    for (const child of obj.n) {
+      expect(typeof child.v).toBe('string')
+      expect(child.v).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    }
+    const result = fromUrl(url, schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on date between with calendar pair', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'publishedOn', op: 'between', value: ['2026-05-01', '2026-05-31'] },
+      ],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on datetime ISO instants', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'occurredAt', op: 'before',  value: '2026-05-01T10:30:00Z' },
+        { field: 'occurredAt', op: 'between', value: ['2026-05-01T00:00:00Z', '2026-05-31T23:59:59Z'] },
+      ],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on datetime inLast {amount, unit}', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } },
+      ],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    expect(obj.n[0].v).toEqual({ amount: 7, unit: 'day' })
+    expect(typeof obj.n[0].v.amount).toBe('number')
+    const result = fromUrl(url, schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('decoded date value with wrong format is dropped (value_type_mismatch)', () => {
+    const compact = { c: 'and', n: [{ f: 'publishedOn', o: 'eq', v: '05/01/2026' }] }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, schema)
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
+  })
+
+  test('decoded inLast with disallowed unit is dropped (value_shape_mismatch)', () => {
+    const compact = {
+      c: 'and',
+      n: [{ f: 'occurredAt', o: 'inLast', v: { amount: 1, unit: 'year' } }],
+    }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, schema)
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
   })
 
   test('round-trip lossless on isEmpty (none shape)', () => {

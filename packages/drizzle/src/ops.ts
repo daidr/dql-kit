@@ -17,6 +17,7 @@ import {
   type AnyColumn,
   type SQL,
 } from 'drizzle-orm'
+import { isRelativeUnit } from '@dql-kit/core'
 import type { OpTranslator } from './types.ts'
 
 const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`)
@@ -42,8 +43,19 @@ export const drizzleOps: Record<string, OpTranslator> = {
   before:       (col, v) => lt(col, v as never),
   after:        (col, v) => gt(col, v as never),
   inLast:       (col, v) => {
-    const { amount, unit } = v as { amount: number, unit: string }
-    return sql`${col} >= NOW() - ${sql.raw(`INTERVAL '${Number(amount)} ${unit}'`)}`
+    // Defence-in-depth: core/check.ts already rejects anything outside the
+    // documented unit set, but `unit` is interpolated into sql.raw so we
+    // re-check here too. A failed re-check signals AST tampering or a custom
+    // op flowing through; throw rather than silently emit unsafe SQL.
+    const { amount, unit } = (v ?? {}) as { amount: unknown, unit: unknown }
+    const a = Number(amount)
+    if (!Number.isFinite(a) || a <= 0) {
+      throw new Error(`[dql-kit/drizzle] inLast: amount must be a positive finite number, got ${String(amount)}`)
+    }
+    if (!isRelativeUnit(unit)) {
+      throw new Error(`[dql-kit/drizzle] inLast: unit must be one of minute/hour/day/week/month, got ${String(unit)}`)
+    }
+    return sql`${col} >= NOW() - ${sql.raw(`INTERVAL '${a} ${unit}'`)}`
   },
   containsAll:  (col, v) => sql`${col} @> ${v}`,
 }

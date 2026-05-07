@@ -1,4 +1,4 @@
-import type { FieldDef, Label } from '@dql-kit/core'
+import { RELATIVE_UNITS, type FieldDef, type Label } from '@dql-kit/core'
 import { computed, defineComponent, h, ref, type Component, type PropType } from 'vue'
 
 const baseProps = {
@@ -385,19 +385,245 @@ export const EnumMultiSelect = defineComponent({
   },
 })
 
+export const DateInput = defineComponent({
+  name: 'DqlDateInput',
+  props: baseProps,
+  setup(props) {
+    return () =>
+      h('input', {
+        type: 'date',
+        class: 'dql-input dql-input--date',
+        'data-testid': 'date-input',
+        value: typeof props.value === 'string' ? props.value : '',
+        onInput: (e: Event) => {
+          const raw = (e.target as HTMLInputElement).value
+          props.onUpdate(raw === '' ? undefined : raw)
+        },
+      })
+  },
+})
+
+export const DateRangeInput = defineComponent({
+  name: 'DqlDateRangeInput',
+  props: baseProps,
+  setup(props) {
+    const pair = computed<[string | null, string | null]>(() => {
+      if (Array.isArray(props.value) && props.value.length === 2) {
+        const [a, b] = props.value
+        return [
+          typeof a === 'string' ? a : null,
+          typeof b === 'string' ? b : null,
+        ]
+      }
+      return [null, null]
+    })
+
+    const update = (idx: 0 | 1, raw: string) => {
+      const next: [string | null, string | null] = [pair.value[0], pair.value[1]]
+      next[idx] = raw === '' ? null : raw
+      props.onUpdate(next)
+    }
+
+    return () =>
+      h(
+        'div',
+        { class: 'dql-input dql-input--date-range' },
+        [
+          h('input', {
+            type: 'date',
+            'data-testid': 'date-pair-min',
+            class: 'dql-pair-min',
+            value: pair.value[0] ?? '',
+            onInput: (e: Event) => update(0, (e.target as HTMLInputElement).value),
+          }),
+          h('span', { class: 'dql-pair-separator' }, '–'),
+          h('input', {
+            type: 'date',
+            'data-testid': 'date-pair-max',
+            class: 'dql-pair-max',
+            value: pair.value[1] ?? '',
+            onInput: (e: Event) => update(1, (e.target as HTMLInputElement).value),
+          }),
+        ],
+      )
+  },
+})
+
+// `<input type="datetime-local">` round-trip: the browser exposes / accepts a
+// `YYYY-MM-DDTHH:mm` string interpreted in the user's local timezone, while
+// the AST stores an ISO-8601 instant (UTC). We convert between the two on
+// read / write so users always see local times but the wire format stays a
+// timezone-stable instant.
+const isoToLocal = (iso: string): string => {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+const localToIso = (local: string): string | undefined => {
+  if (local === '') return undefined
+  const d = new Date(local)
+  if (Number.isNaN(d.getTime())) return undefined
+  return d.toISOString()
+}
+
+export const DateTimeInput = defineComponent({
+  name: 'DqlDateTimeInput',
+  props: baseProps,
+  setup(props) {
+    const localValue = computed(() =>
+      typeof props.value === 'string' ? isoToLocal(props.value) : '',
+    )
+    return () =>
+      h('input', {
+        type: 'datetime-local',
+        class: 'dql-input dql-input--datetime',
+        'data-testid': 'datetime-input',
+        value: localValue.value,
+        onInput: (e: Event) => {
+          props.onUpdate(localToIso((e.target as HTMLInputElement).value))
+        },
+      })
+  },
+})
+
+export const DateTimeRangeInput = defineComponent({
+  name: 'DqlDateTimeRangeInput',
+  props: baseProps,
+  setup(props) {
+    const pair = computed<[string | null, string | null]>(() => {
+      if (Array.isArray(props.value) && props.value.length === 2) {
+        const [a, b] = props.value
+        return [
+          typeof a === 'string' ? a : null,
+          typeof b === 'string' ? b : null,
+        ]
+      }
+      return [null, null]
+    })
+
+    const update = (idx: 0 | 1, raw: string) => {
+      const next: [string | null, string | null] = [pair.value[0], pair.value[1]]
+      next[idx] = raw === '' ? null : (localToIso(raw) ?? null)
+      props.onUpdate(next)
+    }
+
+    return () =>
+      h(
+        'div',
+        { class: 'dql-input dql-input--datetime-range' },
+        [
+          h('input', {
+            type: 'datetime-local',
+            'data-testid': 'datetime-pair-min',
+            class: 'dql-pair-min',
+            value: pair.value[0] ? isoToLocal(pair.value[0]) : '',
+            onInput: (e: Event) => update(0, (e.target as HTMLInputElement).value),
+          }),
+          h('span', { class: 'dql-pair-separator' }, '–'),
+          h('input', {
+            type: 'datetime-local',
+            'data-testid': 'datetime-pair-max',
+            class: 'dql-pair-max',
+            value: pair.value[1] ? isoToLocal(pair.value[1]) : '',
+            onInput: (e: Event) => update(1, (e.target as HTMLInputElement).value),
+          }),
+        ],
+      )
+  },
+})
+
+export const DateTimeInLastInput = defineComponent({
+  name: 'DqlDateTimeInLastInput',
+  props: baseProps,
+  setup(props) {
+    const current = computed<{ amount: number | null, unit: string }>(() => {
+      const v = props.value
+      if (
+        v != null
+        && typeof v === 'object'
+        && typeof (v as Record<string, unknown>).amount === 'number'
+        && typeof (v as Record<string, unknown>).unit === 'string'
+      ) {
+        const r = v as { amount: number, unit: string }
+        return {
+          amount: Number.isFinite(r.amount) ? r.amount : null,
+          unit: r.unit,
+        }
+      }
+      return { amount: null, unit: 'day' }
+    })
+
+    const updateAmount = (raw: string) => {
+      if (raw === '') {
+        props.onUpdate(undefined)
+        return
+      }
+      const n = Number(raw)
+      if (!Number.isFinite(n)) return
+      props.onUpdate({ amount: n, unit: current.value.unit })
+    }
+
+    const updateUnit = (unit: string) => {
+      const a = current.value.amount
+      // No partial emission: leave the existing value untouched until the
+      // amount input is also valid, so prune doesn't see a mid-edit shape.
+      if (a === null) return
+      props.onUpdate({ amount: a, unit })
+    }
+
+    return () =>
+      h(
+        'div',
+        { class: 'dql-input dql-input--in-last' },
+        [
+          h('input', {
+            type: 'number',
+            min: '1',
+            class: 'dql-inlast-amount',
+            'data-testid': 'inlast-amount',
+            value: current.value.amount === null ? '' : current.value.amount,
+            onInput: (e: Event) => updateAmount((e.target as HTMLInputElement).value),
+          }),
+          h(
+            'select',
+            {
+              class: 'dql-inlast-unit',
+              'data-testid': 'inlast-unit',
+              value: current.value.unit,
+              onChange: (e: Event) => updateUnit((e.target as HTMLSelectElement).value),
+            },
+            RELATIVE_UNITS.map((u) =>
+              h('option', { value: u, 'data-testid': `inlast-unit-${u}` }, u),
+            ),
+          ),
+        ],
+      )
+  },
+})
+
 export const defaultRenderers: Readonly<Record<string, Component>> = Object.freeze({
   string: StringInput,
   number: NumberInput,
   boolean: BooleanSwitch,
   enum: EnumSelect,
+  date: DateInput,
+  datetime: DateTimeInput,
 })
 
 export const defaultPairRenderers: Readonly<Record<string, Component>> = Object.freeze({
   number: NumberPairInput,
+  date: DateRangeInput,
+  datetime: DateTimeRangeInput,
 })
 
 export const defaultListRenderers: Readonly<Record<string, Component>> = Object.freeze({
   string: StringTokenInput,
   number: NumberTokenInput,
   enum: EnumMultiSelect,
+})
+
+export const defaultRelativeRenderers: Readonly<Record<string, Component>> = Object.freeze({
+  datetime: DateTimeInLastInput,
 })

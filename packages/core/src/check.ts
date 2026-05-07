@@ -1,5 +1,17 @@
 import type { FieldDef, ValueShape } from './types.ts'
 
+// Whitelist of relative-time units. Locked here in core because the value
+// flows verbatim into a SQL `INTERVAL` literal in the Drizzle adapter, which
+// uses sql.raw to keep PG's interval syntax — so the codec layer is the right
+// place to refuse anything outside the documented set rather than relying on
+// the adapter for safety.
+export const RELATIVE_UNITS = ['minute', 'hour', 'day', 'week', 'month'] as const
+export type RelativeUnit = (typeof RELATIVE_UNITS)[number]
+const relativeUnitSet = new Set<string>(RELATIVE_UNITS)
+
+export const isRelativeUnit = (s: unknown): s is RelativeUnit =>
+  typeof s === 'string' && relativeUnitSet.has(s)
+
 export const checkShape = (value: unknown, shape: ValueShape): boolean => {
   switch (shape) {
     case 'none':
@@ -20,7 +32,9 @@ export const checkShape = (value: unknown, shape: ValueShape): boolean => {
     case 'relative': {
       if (typeof value !== 'object' || value === null) return false
       const r = value as Record<string, unknown>
-      return typeof r.amount === 'number' && typeof r.unit === 'string'
+      if (typeof r.amount !== 'number' || !Number.isFinite(r.amount) || r.amount <= 0) return false
+      if (!isRelativeUnit(r.unit)) return false
+      return true
     }
   }
 }

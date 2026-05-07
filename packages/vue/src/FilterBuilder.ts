@@ -1,7 +1,12 @@
 import { isGroup, type DraftCondition, type DraftGroup, type DraftNode, type FieldDef, type Label, type ValueShape } from '@dql-kit/core'
 import { computed, defineComponent, h, type PropType, type VNode } from 'vue'
 import { getFieldRenderer } from './registry.ts'
-import { defaultListRenderers, defaultPairRenderers, defaultRenderers } from './renderers.ts'
+import {
+  defaultListRenderers,
+  defaultPairRenderers,
+  defaultRelativeRenderers,
+  defaultRenderers,
+} from './renderers.ts'
 import type { UseFilterReturn, Variant } from './types.ts'
 
 const resolveLabel = (label: Label | undefined, fallback: string): string => {
@@ -14,6 +19,7 @@ const resolveRenderer = (typeId: string, shape: ValueShape) => {
   if (override) return override
   if (shape === 'pair') return defaultPairRenderers[typeId]
   if (shape === 'list') return defaultListRenderers[typeId]
+  if (shape === 'relative') return defaultRelativeRenderers[typeId]
   return defaultRenderers[typeId]
 }
 
