@@ -8,11 +8,11 @@ import { integer, pgTable, serial, text } from 'drizzle-orm/pg-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 import {
-  FilterBuilder,
   fieldRendererRegistry,
   registerFieldRenderer,
   useFilter,
-} from '../src/index.ts'
+} from '@dql-kit/vue-headless'
+import { FilterBuilder } from '../src/index.ts'
 
 const articles = pgTable('articles', {
   id: serial('id').primaryKey(),

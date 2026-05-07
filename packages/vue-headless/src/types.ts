@@ -113,5 +113,3 @@ export type FieldRendererProps = {
 }
 
 export type FieldRendererRegistry = Map<string, Component>
-
-export type Variant = 'vertical-stack' | 'popover-trigger'

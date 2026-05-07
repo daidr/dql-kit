@@ -1,7 +1,6 @@
 import { RELATIVE_UNITS, type FieldDef, type Label } from '@dql-kit/core'
+import { filterInjectionKey, type LabelStatus } from '@dql-kit/vue-headless'
 import { computed, defineComponent, h, inject, ref, type Component, type PropType } from 'vue'
-import { filterInjectionKey } from './inject.ts'
-import type { LabelStatus } from './types.ts'
 
 const baseProps = {
   fieldKey: { type: String, required: true as const },

@@ -10,6 +10,11 @@ import {
   type ValueShape,
 } from '@dql-kit/core'
 import {
+  filterInjectionKey,
+  getFieldRenderer,
+  type UseFilterReturn,
+} from '@dql-kit/vue-headless'
+import {
   computed,
   defineComponent,
   h,
@@ -20,8 +25,6 @@ import {
   type PropType,
   type VNode,
 } from 'vue'
-import { filterInjectionKey } from './inject.ts'
-import { getFieldRenderer } from './registry.ts'
 import {
   StringInput,
   defaultListRenderers,
@@ -29,7 +32,7 @@ import {
   defaultRelativeRenderers,
   defaultRenderers,
 } from './renderers.ts'
-import type { UseFilterReturn, Variant } from './types.ts'
+import type { Variant } from './types.ts'
 
 const resolveLabel = (label: Label | undefined, fallback: string): string => {
   if (label === undefined) return fallback

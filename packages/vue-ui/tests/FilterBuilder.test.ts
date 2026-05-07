@@ -1,13 +1,13 @@
 import { defineFilterSchema, f, type Item } from '@dql-kit/core'
+import {
+  fieldRendererRegistry,
+  registerFieldRenderer,
+  useFilter,
+} from '@dql-kit/vue-headless'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
-import {
-  FilterBuilder,
-  registerFieldRenderer,
-  fieldRendererRegistry,
-  useFilter,
-} from '../src/index.ts'
+import { FilterBuilder } from '../src/index.ts'
 
 const schema = defineFilterSchema({
   fields: {
