@@ -509,6 +509,16 @@ describe('fromUrl', () => {
     expect(result.dropped).toEqual([])
   })
 
+  test('round-trip lossless on notEmpty (none shape)', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'notEmpty', value: undefined }],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
   test('schema evolution: removed field reported in dropped', () => {
     const original: ValidAST = {
       combinator: 'and',

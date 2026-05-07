@@ -267,6 +267,18 @@ describe('createDrizzleTranslator — full string op coverage', () => {
     expect(rows.every((r) => r.title === null || r.title === '')).toBe(true)
   })
 
+  test('notEmpty matches non-NULL and non-empty rows (boolean negation of isEmpty)', async () => {
+    const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'notEmpty', value: undefined }],
+    }
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    // 8 fixtures - 2 (NULL + '') = 6 surviving rows.
+    expect(rows.every((r) => typeof r.title === 'string' && r.title.length > 0)).toBe(true)
+    expect(titlesOf(rows)).toEqual(['Hello World', 'foo%bar', 'foo\\bar', 'foo_bar', 'hello', 'world'])
+  })
+
   test('in matches any value in the list', async () => {
     const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
     const ast: ValidAST = {
@@ -974,6 +986,18 @@ describe('createDrizzleTranslator — array<U> op coverage', () => {
     const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.tags).toEqual([])
+  })
+
+  test('notEmpty matches non-NULL non-zero-cardinality arrays (boolean negation)', async () => {
+    const t = createDrizzleTranslator({ schema: arraySchema, table: articleTagsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'notEmpty', value: undefined }],
+    }
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    // 5 fixtures - 1 (empty) = 4 surviving rows.
+    expect(rows).toHaveLength(4)
+    expect(rows.every((r) => r.tags.length > 0)).toBe(true)
   })
 })
 

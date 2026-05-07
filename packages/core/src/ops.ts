@@ -15,6 +15,7 @@ export const builtinOps = {
   startsWith:   def('startsWith',   'single'),
   endsWith:     def('endsWith',     'single'),
   isEmpty:      def('isEmpty',      'none'),
+  notEmpty:     def('notEmpty',     'none'),
   in:           def('in',           'list'),
   notIn:        def('notIn',        'list'),
   gt:           def('gt',           'single'),

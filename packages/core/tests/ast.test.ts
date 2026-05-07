@@ -205,6 +205,18 @@ describe('prune', () => {
     expect(cond.value).toBeUndefined()
   })
 
+  test('notEmpty op accepts no value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'notEmpty' }],
+    }
+    const out = prune(draft, schema)
+    expect(out.children).toHaveLength(1)
+    const cond = out.children[0] as { field: string, op: string, value: unknown }
+    expect(cond.op).toBe('notEmpty')
+    expect(cond.value).toBeUndefined()
+  })
+
   test.each([
     ['contains',    'foo'],
     ['notContains', 'foo'],
@@ -567,6 +579,14 @@ describe('prune', () => {
     const draft: DraftAST = {
       combinator: 'and',
       children: [{ field: 'tags', op: 'isEmpty' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('array notEmpty (none shape) is kept with no value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'notEmpty' }],
     }
     expect(prune(draft, schema).children).toHaveLength(1)
   })

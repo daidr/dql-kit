@@ -47,7 +47,7 @@ type CustomOpts = CommonOpts & {
 const opSets = {
   string:   [
     builtinOps.eq, builtinOps.neq, builtinOps.contains, builtinOps.notContains,
-    builtinOps.startsWith, builtinOps.endsWith, builtinOps.isEmpty,
+    builtinOps.startsWith, builtinOps.endsWith, builtinOps.isEmpty, builtinOps.notEmpty,
     builtinOps.in, builtinOps.notIn,
   ],
   number:   [
@@ -59,7 +59,7 @@ const opSets = {
   date:     [builtinOps.eq, builtinOps.before, builtinOps.after, builtinOps.between],
   datetime: [builtinOps.before, builtinOps.after, builtinOps.between, builtinOps.inLast],
   id:       [builtinOps.eq, builtinOps.neq, builtinOps.in, builtinOps.notIn],
-  array:    [builtinOps.contains, builtinOps.notContains, builtinOps.containsAll, builtinOps.isEmpty],
+  array:    [builtinOps.contains, builtinOps.notContains, builtinOps.containsAll, builtinOps.isEmpty, builtinOps.notEmpty],
 } as const satisfies Record<BuiltinFieldTypeId, OpDef[]>
 
 // `withOps` mutates ops in-place via spread. Generic over the concrete

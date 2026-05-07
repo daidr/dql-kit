@@ -33,8 +33,9 @@ const effectiveTypeId = (field: FieldDef): string =>
 // Some ops share an op name across very different SQL semantics — `contains`
 // is ILIKE for string fields but `= ANY(col)` for PG array fields, and
 // `isEmpty` is `IS NULL OR = ''` for strings vs `cardinality(col) = 0` for
-// arrays. The op translator branches on the effective typeId via the
-// OpContext.
+// arrays. `notEmpty` is the boolean negation of `isEmpty` (NULL → empty,
+// not "unknown") so callers don't need a separate `not(isEmpty)` wrapper.
+// The op translator branches on the effective typeId via the OpContext.
 
 export const drizzleOps: Record<string, OpTranslator> = {
   eq:           (col, v) => eq(col, v as never),
@@ -63,6 +64,15 @@ export const drizzleOps: Record<string, OpTranslator> = {
       return orSql(isNull(col), sql`cardinality(${col}) = 0`)!
     }
     return orSql(isNull(col), eq(col as AnyColumn, '' as never))!
+  },
+  notEmpty:     (col, _v, ctx) => {
+    if (effectiveTypeId(ctx.field) === 'array') {
+      // Boolean negation of isEmpty: must be non-NULL AND have at least
+      // one element. Treating NULL as "empty" (not "unknown") matches the
+      // intent users have when picking this op in the UI.
+      return andSql(isNotNull(col), sql`cardinality(${col}) > 0`)!
+    }
+    return andSql(isNotNull(col), ne(col as AnyColumn, '' as never))!
   },
   in:           (col, v) => inArray(col, v as never[]),
   notIn:        (col, v) => notInArray(col, v as never[]),

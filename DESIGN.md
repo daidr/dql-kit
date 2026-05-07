@@ -86,14 +86,14 @@ op-level negation (`neq`, `notIn`, `notContains`) is sufficient and clearer.
 
 | Type | Default ops |
 |---|---|
-| `string` | eq, neq, contains, startsWith, endsWith, isEmpty, in, notIn |
+| `string` | eq, neq, contains, startsWith, endsWith, isEmpty, notEmpty, in, notIn |
 | `number` | eq, neq, gt, gte, lt, lte, between, in |
 | `boolean` | eq |
 | `enum<T>` | eq, neq, in, notIn |
 | `date` | eq, before, after, between |
 | `datetime` | before, after, between, inLast |
 | `id<T>` | eq, neq, in, notIn (requires `search` + `resolve`) |
-| `array<U>` | contains, notContains, containsAll, isEmpty |
+| `array<U>` | contains, notContains, containsAll, isEmpty, notEmpty |
 
 `f.custom({ typeId, ops, ... })` for project-specific types (money, duration, etc.).
 
@@ -375,7 +375,7 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
 These are NOT shortcuts; they are decisions that something belongs at a different
 layer or a later phase, with API hooks already preserved:
 
-- NOT operator → use `neq` / `notIn` / `notContains`.
+- NOT operator → use `neq` / `notIn` / `notContains` / `notEmpty`.
 - `bigint` / `decimal` / `json` / `duration` / `range` field types → use `f.custom`.
 - Tuple-N value shapes (N ≥ 3) → `between` is the only common pair op.
 - Saved filter UI / persistence → application layer; primitives provided.
