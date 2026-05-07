@@ -58,11 +58,38 @@ const queryValueAsString = (
   return ''
 }
 
+// sessionStorage key prefix. queryKey is appended so two filters on one page
+// (e.g. `?a=...&b=...`) get disjoint storage entries the same way they get
+// disjoint URL keys. Prefix exists so the keys are debug-greppable in devtools.
+const PERSIST_KEY_PREFIX = 'dql-kit:draft:'
+
+const getSessionStorage = (): Storage | null => {
+  try {
+    const s = (globalThis as { sessionStorage?: Storage }).sessionStorage
+    return s ?? null
+  } catch {
+    return null
+  }
+}
+
+const isEmptyDraft = (d: DraftAST): boolean =>
+  d.combinator === 'and' && d.children.length === 0
+
+const isDraftLike = (v: unknown): v is DraftAST => {
+  if (!v || typeof v !== 'object') return false
+  const o = v as { combinator?: unknown, children?: unknown }
+  return (
+    (o.combinator === 'and' || o.combinator === 'or') && Array.isArray(o.children)
+  )
+}
+
 export const useFilter = <S extends FilterSchema>(
   opts: UseFilterOptions<S>,
 ): UseFilterReturn<S> => {
   const sync: SyncMode = opts.sync ?? 'none'
   const queryKey = opts.queryKey ?? 'filter'
+  const persistMode = opts.persistDraft ?? 'none'
+  const storageKey = PERSIST_KEY_PREFIX + queryKey
 
   const schemaRef: ComputedRef<S | undefined> = computed(() =>
     isRef(opts.schema)
@@ -80,7 +107,32 @@ export const useFilter = <S extends FilterSchema>(
 
   const dropped: Ref<DroppedNode[]> = ref([])
 
+  // Merge rule when persistDraft: 'session' is enabled — saved draft wins
+  // entirely if it exists. Rationale: a saved draft was written *after* the
+  // previous session reconciled URL → draft, so it already contains the
+  // URL-derived Valid AST plus any in-progress (incomplete) nodes the user
+  // hadn't finished. Reusing it preserves both. If the URL changed externally
+  // between sessions, the saved draft still wins on first paint; the URL
+  // watcher (when sync: 'url') will then run on the next user edit and the
+  // valid → URL writer reconciles. No saved draft → fall back to URL → initial.
+  const readPersistedDraft = (): DraftAST | null => {
+    if (persistMode !== 'session') return null
+    const storage = getSessionStorage()
+    if (!storage) return null
+    try {
+      const raw = storage.getItem(storageKey)
+      if (raw === null) return null
+      const parsed = JSON.parse(raw) as unknown
+      if (isDraftLike(parsed)) return parsed
+    } catch {
+      // Corrupt JSON or storage access denied — silently fall through.
+    }
+    return null
+  }
+
   const initialDraft = (): DraftAST => {
+    const persisted = readPersistedDraft()
+    if (persisted) return persisted
     if (route && schemaRef.value) {
       const raw = queryValueAsString(route.query[queryKey])
       if (raw.length > 0) {
@@ -294,6 +346,28 @@ export const useFilter = <S extends FilterSchema>(
       }
       void router.replace({ query: nextQuery })
     })
+  }
+
+  if (persistMode === 'session') {
+    const storage = getSessionStorage()
+    if (storage) {
+      // Mirror every draft mutation into sessionStorage. Empty AST removes the
+      // key (so devtools shows a clean slate after `clear()` and the initial
+      // load doesn't restore a stale empty entry). Storage errors (quota,
+      // disabled, private mode) are silently swallowed — losing persistence
+      // is preferable to crashing the composable.
+      watch(draft, (next) => {
+        try {
+          if (isEmptyDraft(next)) {
+            storage.removeItem(storageKey)
+          } else {
+            storage.setItem(storageKey, JSON.stringify(next))
+          }
+        } catch {
+          /* quota / disabled — silent */
+        }
+      })
+    }
   }
 
   const dismissDropped = (): void => {
