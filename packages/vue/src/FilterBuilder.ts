@@ -1,5 +1,6 @@
 import { isGroup, type DraftCondition, type DraftGroup, type DraftNode, type FieldDef, type Label, type ValueShape } from '@dql-kit/core'
-import { computed, defineComponent, h, type PropType, type VNode } from 'vue'
+import { computed, defineComponent, h, provide, type PropType, type VNode } from 'vue'
+import { filterInjectionKey } from './inject.ts'
 import { getFieldRenderer } from './registry.ts'
 import {
   defaultListRenderers,
@@ -36,6 +37,10 @@ export const FilterBuilder = defineComponent({
     },
   },
   setup(props) {
+    // Expose the active filter to descendant renderers (used by id
+    // autocomplete to drive search.setQuery and read labelOf).
+    provide(filterInjectionKey, props.filter)
+
     const schema = computed(() => props.filter.schema.value)
     const draft = computed(() => props.filter.draft.value)
 

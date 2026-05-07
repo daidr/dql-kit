@@ -30,6 +30,10 @@ export type SearchSlot<ID = string | number> = {
   loading: boolean
   error: Error | null
   results: Item<ID>[]
+  // Stable closure attached to the slot — Vue auto-unwraps refs in templates,
+  // so callers can write `filter.search.setQuery(...)` from a template or
+  // `filter.search.value.setQuery(...)` from JS.
+  setQuery: (fieldKey: string, query: string) => void
 }
 
 export type FilterActions = {

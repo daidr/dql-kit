@@ -1,6 +1,6 @@
-import { defineFilterSchema, f, type ValidAST } from '@dql-kit/core'
-import { describe, expect, it } from 'vitest'
-import { isProxy, isReactive, isRef, ref } from 'vue'
+import { defineFilterSchema, f, type Item, type ValidAST } from '@dql-kit/core'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { isProxy, isReactive, isRef, nextTick, ref } from 'vue'
 import { useFilter } from '../src/index.ts'
 
 const schema = defineFilterSchema({
@@ -132,5 +132,177 @@ describe('useFilter — errors surface', () => {
     filter.actions.addCondition([])
     expect(filter.errors.value.length).toBeGreaterThan(0)
     expect(filter.errors.value[0]?.code).toBe('incomplete')
+  })
+})
+
+describe('useFilter — async id integration', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // Fixture authors keyed by id; the fetcher reads from this so we can
+  // observe call-arguments + control returned items per test.
+  const authorRows = (ids: (string | number)[]): Item[] =>
+    ids.map((id) => ({ id, label: `Author ${String(id)}` }))
+
+  const idSchema = (
+    search: (q: string, signal: AbortSignal) => Promise<Item[]> | Item[],
+    resolve: (
+      ids: (string | number)[],
+      signal: AbortSignal,
+    ) => Promise<Item[]> | Item[],
+  ) =>
+    defineFilterSchema({
+      fields: {
+        authorId: f.id({
+          fetcher: {
+            search: search as (q: string, signal: AbortSignal) => Promise<Item[]>,
+            resolve: resolve as (
+              ids: (string | number)[],
+              signal: AbortSignal,
+            ) => Promise<Item[]>,
+          },
+        }),
+      },
+    })
+
+  it('eager resolve fires once per field on mount when initial AST contains id values', async () => {
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const idS = idSchema(search, resolve)
+    useFilter({
+      schema: idS,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'in', value: [1, 2, 3] }],
+      },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(resolve.mock.calls[0]?.[0]).toEqual([1, 2, 3])
+  })
+
+  it('labelOf transitions pending → resolved reactively after fetcher settles', async () => {
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const idS = idSchema(search, resolve)
+    const filter = useFilter({
+      schema: idS,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: 42 }],
+      },
+    })
+    expect(filter.labelOf('authorId', 42)).toEqual({ status: 'pending' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(filter.labelOf('authorId', 42)).toMatchObject({
+      status: 'resolved',
+      label: 'Author 42',
+    })
+  })
+
+  it('search.setQuery debounces (250ms default) and emits a single fetcher call with the latest query', async () => {
+    const search = vi.fn(async (q: string) => authorRows([q]))
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const filter = useFilter({ schema: idSchema(search, resolve), sync: 'none' })
+
+    filter.search.value.setQuery('authorId', 'a')
+    filter.search.value.setQuery('authorId', 'ab')
+    filter.search.value.setQuery('authorId', 'abc')
+    expect(search).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(search.mock.calls[0]?.[0]).toBe('abc')
+    expect(filter.search.value.fieldKey).toBe('authorId')
+    expect(filter.search.value.results).toHaveLength(1)
+  })
+
+  it('debounceMs option overrides the default', async () => {
+    const search = vi.fn(async (q: string) => authorRows([q]))
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const filter = useFilter({
+      schema: idSchema(search, resolve),
+      sync: 'none',
+      debounceMs: 0,
+    })
+    filter.search.value.setQuery('authorId', 'a')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(search).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalidateLabels() clears the cache and re-issues resolve for current AST', async () => {
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const filter = useFilter({
+      schema: idSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: 1 }],
+      },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    filter.invalidateLabels()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolve).toHaveBeenCalledTimes(2)
+  })
+
+  it('newly added id values trigger an additional resolve call', async () => {
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const filter = useFilter({ schema: idSchema(search, resolve), sync: 'none' })
+    filter.actions.addCondition([], { field: 'authorId', op: 'eq', value: 7 })
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(resolve.mock.calls[0]?.[0]).toEqual([7])
+    filter.actions.addCondition([], { field: 'authorId', op: 'eq', value: 8 })
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(0)
+    // Second call only contains the new id (cache hit on 7).
+    expect(resolve).toHaveBeenCalledTimes(2)
+    expect(resolve.mock.calls[1]?.[0]).toEqual([8])
+  })
+
+  it('search rejection: error populated, loading false, results unchanged', async () => {
+    const boom = new Error('search-failed')
+    const search = vi.fn(async () => {
+      throw boom
+    })
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const filter = useFilter({
+      schema: idSchema(search, resolve),
+      sync: 'none',
+      debounceMs: 0,
+    })
+    filter.search.value.setQuery('authorId', 'a')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(filter.search.value.error).toBe(boom)
+    expect(filter.search.value.loading).toBe(false)
+    expect(filter.search.value.results).toEqual([])
+  })
+
+  it('sync resolve fetcher: labelOf is resolved on first read (no flicker)', async () => {
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = (ids: (string | number)[]): Item[] => authorRows(ids)
+    const filter = useFilter({
+      schema: idSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: 1 }],
+      },
+    })
+    // No timer advance; sync fetcher writes through immediately.
+    expect(filter.labelOf('authorId', 1)).toMatchObject({
+      status: 'resolved',
+      label: 'Author 1',
+    })
   })
 })

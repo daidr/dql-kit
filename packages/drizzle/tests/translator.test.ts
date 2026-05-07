@@ -801,3 +801,82 @@ describe('createDrizzleTranslator — inLast (relative shape)', () => {
     expect(() => t.toWhere(ast)).toThrow(/amount must be a positive finite number/)
   })
 })
+
+// Slice 7: id<T> field SQL coverage. The id field carries no DB-specific
+// semantics — it's eq/neq/in/notIn just like a primitive — but we want a
+// pglite roundtrip to lock in that the integer-FK use case (the most common
+// dashboard shape) works end-to-end.
+const articleAuthors = pgTable('article_authors', {
+  id: serial('id').primaryKey(),
+  authorId: integer('author_id').notNull(),
+})
+const noopFetcher = {
+  search: async () => [],
+  resolve: async () => [],
+}
+const idSchema = defineFilterSchema({
+  fields: {
+    authorId: f.id<number>({ fetcher: noopFetcher }),
+  },
+})
+
+describe('createDrizzleTranslator — id<T> op coverage', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE article_authors (
+        id SERIAL PRIMARY KEY,
+        author_id INTEGER NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO article_authors (author_id) VALUES (1), (2), (3), (1), (4);
+    `)
+  })
+
+  test('id eq matches the equal author', async () => {
+    const t = createDrizzleTranslator({ schema: idSchema, table: articleAuthors })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'authorId', op: 'eq', value: 1 }],
+    }
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.authorId === 1)).toBe(true)
+  })
+
+  test('id neq excludes the equal author', async () => {
+    const t = createDrizzleTranslator({ schema: idSchema, table: articleAuthors })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'authorId', op: 'neq', value: 1 }],
+    }
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    expect(rows).toHaveLength(3)
+    expect(rows.every((r) => r.authorId !== 1)).toBe(true)
+  })
+
+  test('id in matches any of the listed ids', async () => {
+    const t = createDrizzleTranslator({ schema: idSchema, table: articleAuthors })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'authorId', op: 'in', value: [2, 4] }],
+    }
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    expect(rows.map((r) => r.authorId).sort()).toEqual([2, 4])
+  })
+
+  test('id notIn excludes the listed ids', async () => {
+    const t = createDrizzleTranslator({ schema: idSchema, table: articleAuthors })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'authorId', op: 'notIn', value: [1] }],
+    }
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    expect(rows.map((r) => r.authorId).sort()).toEqual([2, 3, 4])
+  })
+})

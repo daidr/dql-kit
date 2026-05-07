@@ -1,6 +1,6 @@
-import { defineFilterSchema, f } from '@dql-kit/core'
+import { defineFilterSchema, f, type Item } from '@dql-kit/core'
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FilterBuilder, useFilter } from '../src/index.ts'
 
 const schema = defineFilterSchema({
@@ -732,5 +732,198 @@ describe('FilterBuilder — datetime inLast renderer', () => {
     const wrapper = mount(FilterBuilder, { props: { filter } })
     await wrapper.find('[data-testid="inlast-amount"]').setValue('')
     expect(filter.valid.value.children).toHaveLength(0)
+  })
+})
+
+describe('FilterBuilder — id autocomplete renderer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const idAuthorSchema = (
+    search: (q: string, signal: AbortSignal) => Promise<Item[]> | Item[],
+    resolve: (
+      ids: (string | number)[],
+      signal: AbortSignal,
+    ) => Promise<Item[]> | Item[],
+  ) =>
+    defineFilterSchema({
+      fields: {
+        authorId: f.id<number>({
+          fetcher: {
+            search: search as (q: string, signal: AbortSignal) => Promise<Item[]>,
+            resolve: resolve as (
+              ids: (string | number)[],
+              signal: AbortSignal,
+            ) => Promise<Item[]>,
+          },
+        }),
+      },
+    })
+
+  it('typing in the search box drives setQuery; results render after debounce', async () => {
+    const search = vi.fn(async (q: string): Promise<Item[]> => [
+      { id: 1, label: `match-${q}-1` },
+      { id: 2, label: `match-${q}-2` },
+    ])
+    const resolve = vi.fn(
+      async (ids: (string | number)[]): Promise<Item[]> =>
+        ids.map((id) => ({ id, label: `Author ${String(id)}` })),
+    )
+    const filter = useFilter({
+      schema: idAuthorSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: undefined }],
+      },
+      debounceMs: 0,
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('[data-testid="id-search-input"]')
+    expect(input.exists()).toBe(true)
+    await input.trigger('focus')
+    await input.setValue('alice')
+    await vi.advanceTimersByTimeAsync(0)
+    await wrapper.vm.$nextTick()
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="id-results"]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-testid^="id-result-"]')).toHaveLength(2)
+  })
+
+  it('selecting a result populates the condition value with the raw id', async () => {
+    const search = vi.fn(async (): Promise<Item[]> => [
+      { id: 7, label: 'Alice' },
+    ])
+    const resolve = vi.fn(
+      async (ids: (string | number)[]): Promise<Item[]> =>
+        ids.map((id) => ({ id, label: `Author ${String(id)}` })),
+    )
+    const filter = useFilter({
+      schema: idAuthorSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: undefined }],
+      },
+      debounceMs: 0,
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="id-search-input"]').trigger('focus')
+    await wrapper.find('[data-testid="id-search-input"]').setValue('a')
+    await vi.advanceTimersByTimeAsync(0)
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-testid="id-result-7"]').trigger('mousedown')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'authorId',
+      op: 'eq',
+      value: 7,
+    })
+    // After selection: chip with the resolved label is shown, no input.
+    await vi.advanceTimersByTimeAsync(0)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="id-chip"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="id-search-input"]').exists()).toBe(false)
+  })
+
+  it('id chip displays "..." while pending and the resolved label after fetcher settles', async () => {
+    let resolveResolveFn!: (items: Item[]) => void
+    const resolveP = new Promise<Item[]>((r) => {
+      resolveResolveFn = r
+    })
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = vi.fn(() => resolveP)
+    const filter = useFilter({
+      schema: idAuthorSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: 42 }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="id-chip"]').text()).toContain('…')
+    resolveResolveFn([{ id: 42, label: 'Alice' }])
+    await vi.advanceTimersByTimeAsync(0)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="id-chip"]').text()).toContain('Alice')
+  })
+
+  it('clearing a selected id reveals the search input again', async () => {
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = vi.fn(
+      async (ids: (string | number)[]): Promise<Item[]> =>
+        ids.map((id) => ({ id, label: `Author ${String(id)}` })),
+    )
+    const filter = useFilter({
+      schema: idAuthorSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: 7 }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="id-clear"]').trigger('click')
+    expect(filter.valid.value.children).toHaveLength(0)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="id-search-input"]').exists()).toBe(true)
+  })
+
+  it('id "in" multi-renderer shows one chip per selected id and adds new ones via search', async () => {
+    const search = vi.fn(async (): Promise<Item[]> => [{ id: 9, label: 'Carol' }])
+    const resolve = vi.fn(
+      async (ids: (string | number)[]): Promise<Item[]> =>
+        ids.map((id) => ({ id, label: `Author ${String(id)}` })),
+    )
+    const filter = useFilter({
+      schema: idAuthorSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'in', value: [1, 2] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="id-chip-1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="id-chip-2"]').exists()).toBe(true)
+
+    const input = wrapper.find('[data-testid="id-search-input"]')
+    await input.trigger('focus')
+    await input.setValue('c')
+    await vi.advanceTimersByTimeAsync(250)
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-testid="id-result-9"]').trigger('mousedown')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'authorId',
+      op: 'in',
+      value: [1, 2, 9],
+    })
+  })
+
+  it('removing a chip from the multi-renderer removes the id from the value array', async () => {
+    const search = vi.fn(async () => [] as Item[])
+    const resolve = vi.fn(
+      async (ids: (string | number)[]): Promise<Item[]> =>
+        ids.map((id) => ({ id, label: `Author ${String(id)}` })),
+    )
+    const filter = useFilter({
+      schema: idAuthorSchema(search, resolve),
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'in', value: [1, 2, 3] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="id-chip-remove-2"]').trigger('click')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'authorId',
+      op: 'in',
+      value: [1, 3],
+    })
   })
 })

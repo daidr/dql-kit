@@ -12,13 +12,14 @@ import {
   type DraftNode,
   type FilterSchema,
   type ValidAST,
+  type ValidNode,
   type ValidationError,
 } from '@dql-kit/core'
 import { computed, isRef, ref, toRaw, watch, type ComputedRef, type Ref } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
 import type {
   FilterActions,
-  LabelStatus,
   SearchSlot,
   SyncMode,
   UseFilterOptions,
@@ -90,13 +91,34 @@ export const useFilter = <S extends FilterSchema>(
 
   const draft = ref<DraftAST>(initialDraft()) as Ref<DraftAST>
 
+  const debounceMs = opts.debounceMs ?? 250
+  const orchestrator = createAsyncOrchestrator()
+
+  const setSearchQuery = (fieldKey: string, query: string): void => {
+    const s = schemaRef.value
+    if (!s) return
+    const fieldDef = s.fields[fieldKey]
+    if (!fieldDef || fieldDef.typeId !== 'id' || !fieldDef.fetcher) return
+    orchestrator.setQuery(
+      fieldKey,
+      query,
+      fieldDef.fetcher.search,
+      debounceMs,
+      (patch) => {
+        // Spread preserves the slot's `setQuery` member across updates.
+        search.value = { ...search.value, ...patch } as SearchSlot
+      },
+    )
+  }
+
   const search = ref<SearchSlot>({
     fieldKey: null,
     query: '',
     loading: false,
     error: null,
     results: [],
-  })
+    setQuery: setSearchQuery,
+  } as SearchSlotState & { setQuery: (k: string, q: string) => void })
 
   const valid: ComputedRef<ValidAST> = computed(() => {
     const s = schemaRef.value
@@ -187,12 +209,53 @@ export const useFilter = <S extends FilterSchema>(
 
   const toJSON = (): ValidAST => valid.value
 
-  const labelOf = (_fieldKey: string, _id: string | number): LabelStatus => ({
-    status: 'pending',
-  })
+  const collectIdsByField = (
+    ast: ValidAST,
+    schema: FilterSchema,
+  ): Map<string, (string | number)[]> => {
+    const out = new Map<string, (string | number)[]>()
+    const visit = (node: ValidNode): void => {
+      if ('combinator' in node) {
+        node.children.forEach(visit)
+        return
+      }
+      const fieldDef = schema.fields[node.field]
+      if (!fieldDef || fieldDef.typeId !== 'id') return
+      const bucket = out.get(node.field) ?? []
+      if (Array.isArray(node.value)) {
+        for (const v of node.value) {
+          if (typeof v === 'string' || typeof v === 'number') bucket.push(v)
+        }
+      } else if (typeof node.value === 'string' || typeof node.value === 'number') {
+        bucket.push(node.value)
+      }
+      out.set(node.field, bucket)
+    }
+    visit(ast)
+    return out
+  }
 
-  const invalidateLabels = (_fieldKey?: string): void => {
-    // No-op: async label cache lands in slice #7.
+  const eagerResolve = (v: ValidAST): void => {
+    const s = schemaRef.value
+    if (!s) return
+    const map = collectIdsByField(v, s)
+    for (const [fieldKey, ids] of map) {
+      const fieldDef = s.fields[fieldKey]
+      if (fieldDef && fieldDef.typeId === 'id' && fieldDef.fetcher) {
+        orchestrator.resolveBatch(fieldKey, ids, fieldDef.fetcher.resolve)
+      }
+    }
+  }
+
+  watch(valid, eagerResolve, { immediate: true })
+
+  const labelOf = orchestrator.labelOf
+
+  const invalidateLabels = (fieldKey?: string): void => {
+    orchestrator.invalidateLabels(fieldKey)
+    // Re-trigger resolve for everything still referenced by the AST so the
+    // cache refills rather than staying empty until the next AST change.
+    eagerResolve(valid.value)
   }
 
   if (sync === 'url' && router && route) {

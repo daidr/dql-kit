@@ -1,5 +1,7 @@
 import { RELATIVE_UNITS, type FieldDef, type Label } from '@dql-kit/core'
-import { computed, defineComponent, h, ref, type Component, type PropType } from 'vue'
+import { computed, defineComponent, h, inject, ref, type Component, type PropType } from 'vue'
+import { filterInjectionKey } from './inject.ts'
+import type { LabelStatus } from './types.ts'
 
 const baseProps = {
   fieldKey: { type: String, required: true as const },
@@ -603,6 +605,239 @@ export const DateTimeInLastInput = defineComponent({
   },
 })
 
+// Render the user-facing label text for an id, falling back through the
+// LabelStatus state machine: pending → '…', resolved → label, error → '#<id>'.
+const idDisplayText = (status: LabelStatus): string => {
+  if (status.status === 'resolved') return status.label
+  if (status.status === 'pending') return '…'
+  return `#${(status as { id: string | number }).id}`
+}
+
+export const IdAutocompleteInput = defineComponent({
+  name: 'DqlIdAutocompleteInput',
+  props: baseProps,
+  setup(props) {
+    const filter = inject(filterInjectionKey, null)
+    if (!filter) {
+      // Graceful degradation outside FilterBuilder context: a plain text
+      // box that accepts ids verbatim. Useful for test harnesses that
+      // mount renderers directly.
+      return () =>
+        h('input', {
+          type: 'text',
+          class: 'dql-input dql-input--id-fallback',
+          value: props.value === undefined || props.value === null ? '' : String(props.value),
+          onInput: (e: Event) => {
+            const raw = (e.target as HTMLInputElement).value
+            props.onUpdate(raw === '' ? undefined : raw)
+          },
+        })
+    }
+
+    const open = ref(false)
+
+    const selectedLabel = computed(() => {
+      const id = props.value
+      if (typeof id !== 'string' && typeof id !== 'number') return null
+      return idDisplayText(filter.labelOf(props.fieldKey, id))
+    })
+
+    const isOwnSlot = computed(
+      () => filter.search.value.fieldKey === props.fieldKey,
+    )
+
+    const driveQuery = (q: string) => {
+      filter.search.value.setQuery(props.fieldKey, q)
+    }
+
+    const select = (id: string | number) => {
+      props.onUpdate(id)
+      open.value = false
+      driveQuery('')
+    }
+
+    const clear = () => {
+      props.onUpdate(undefined)
+      driveQuery('')
+    }
+
+    return () =>
+      h(
+        'div',
+        { class: 'dql-input dql-input--id', 'data-testid': 'id-autocomplete' },
+        [
+          props.value !== undefined
+            ? h(
+                'span',
+                { class: 'dql-id-chip', 'data-testid': 'id-chip' },
+                [
+                  h('span', { class: 'dql-id-chip-label' }, selectedLabel.value ?? ''),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      class: 'dql-id-chip-clear',
+                      'data-testid': 'id-clear',
+                      onClick: clear,
+                    },
+                    '×',
+                  ),
+                ],
+              )
+            : h('input', {
+                type: 'text',
+                class: 'dql-id-search',
+                'data-testid': 'id-search-input',
+                value: isOwnSlot.value ? filter.search.value.query : '',
+                onInput: (e: Event) => {
+                  driveQuery((e.target as HTMLInputElement).value)
+                  open.value = true
+                },
+                onFocus: () => {
+                  open.value = true
+                },
+              }),
+          open.value && isOwnSlot.value && filter.search.value.results.length > 0
+            ? h(
+                'ul',
+                { class: 'dql-id-results', 'data-testid': 'id-results' },
+                filter.search.value.results.map((item) =>
+                  h(
+                    'li',
+                    {
+                      key: String(item.id),
+                      class: 'dql-id-result',
+                      'data-testid': `id-result-${String(item.id)}`,
+                      // mousedown fires before the input's blur, so the
+                      // select handler runs even if we wire blur → close.
+                      onMousedown: (e: Event) => {
+                        e.preventDefault()
+                        select(item.id)
+                      },
+                    },
+                    item.label,
+                  ),
+                ),
+              )
+            : null,
+        ],
+      )
+  },
+})
+
+export const IdMultiAutocompleteInput = defineComponent({
+  name: 'DqlIdMultiAutocompleteInput',
+  props: baseProps,
+  setup(props) {
+    const filter = inject(filterInjectionKey, null)
+    if (!filter) {
+      return () =>
+        h('div', { class: 'dql-input dql-input--id-multi-fallback' }, [
+          h('em', 'IdMultiAutocompleteInput requires FilterBuilder context'),
+        ])
+    }
+
+    const open = ref(false)
+
+    const selected = computed<(string | number)[]>(() =>
+      Array.isArray(props.value)
+        ? (props.value.filter(
+            (x) => typeof x === 'string' || typeof x === 'number',
+          ) as (string | number)[])
+        : [],
+    )
+
+    const isOwnSlot = computed(
+      () => filter.search.value.fieldKey === props.fieldKey,
+    )
+
+    const driveQuery = (q: string) => {
+      filter.search.value.setQuery(props.fieldKey, q)
+    }
+
+    const removeId = (id: string | number) => {
+      props.onUpdate(selected.value.filter((x) => x !== id))
+    }
+
+    const addId = (id: string | number) => {
+      if (selected.value.includes(id)) return
+      props.onUpdate([...selected.value, id])
+      driveQuery('')
+    }
+
+    return () =>
+      h(
+        'div',
+        { class: 'dql-input dql-input--id-multi', 'data-testid': 'id-multi-autocomplete' },
+        [
+          ...selected.value.map((id) =>
+            h(
+              'span',
+              {
+                key: String(id),
+                class: 'dql-id-chip',
+                'data-testid': `id-chip-${String(id)}`,
+              },
+              [
+                h(
+                  'span',
+                  { class: 'dql-id-chip-label' },
+                  idDisplayText(filter.labelOf(props.fieldKey, id)),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'dql-id-chip-clear',
+                    'data-testid': `id-chip-remove-${String(id)}`,
+                    onClick: () => removeId(id),
+                  },
+                  '×',
+                ),
+              ],
+            ),
+          ),
+          h('input', {
+            type: 'text',
+            class: 'dql-id-search',
+            'data-testid': 'id-search-input',
+            value: isOwnSlot.value ? filter.search.value.query : '',
+            onInput: (e: Event) => {
+              driveQuery((e.target as HTMLInputElement).value)
+              open.value = true
+            },
+            onFocus: () => {
+              open.value = true
+            },
+          }),
+          open.value && isOwnSlot.value && filter.search.value.results.length > 0
+            ? h(
+                'ul',
+                { class: 'dql-id-results', 'data-testid': 'id-results' },
+                filter.search.value.results
+                  .filter((item) => !selected.value.includes(item.id))
+                  .map((item) =>
+                    h(
+                      'li',
+                      {
+                        key: String(item.id),
+                        class: 'dql-id-result',
+                        'data-testid': `id-result-${String(item.id)}`,
+                        onMousedown: (e: Event) => {
+                          e.preventDefault()
+                          addId(item.id)
+                        },
+                      },
+                      item.label,
+                    ),
+                  ),
+              )
+            : null,
+        ],
+      )
+  },
+})
+
 export const defaultRenderers: Readonly<Record<string, Component>> = Object.freeze({
   string: StringInput,
   number: NumberInput,
@@ -610,6 +845,7 @@ export const defaultRenderers: Readonly<Record<string, Component>> = Object.free
   enum: EnumSelect,
   date: DateInput,
   datetime: DateTimeInput,
+  id: IdAutocompleteInput,
 })
 
 export const defaultPairRenderers: Readonly<Record<string, Component>> = Object.freeze({
@@ -622,6 +858,7 @@ export const defaultListRenderers: Readonly<Record<string, Component>> = Object.
   string: StringTokenInput,
   number: NumberTokenInput,
   enum: EnumMultiSelect,
+  id: IdMultiAutocompleteInput,
 })
 
 export const defaultRelativeRenderers: Readonly<Record<string, Component>> = Object.freeze({

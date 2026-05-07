@@ -19,11 +19,15 @@ export {
   DateTimeInput,
   DateTimeRangeInput,
   DateTimeInLastInput,
+  IdAutocompleteInput,
+  IdMultiAutocompleteInput,
   defaultRenderers,
   defaultPairRenderers,
   defaultListRenderers,
   defaultRelativeRenderers,
 } from './renderers.ts'
+export { filterInjectionKey } from './inject.ts'
+export { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
 export type {
   FieldRendererProps,
   FieldRendererRegistry,
