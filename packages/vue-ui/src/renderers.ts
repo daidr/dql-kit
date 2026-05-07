@@ -2,11 +2,16 @@ import { RELATIVE_UNITS, type FieldDef, type Label } from '@dql-kit/core'
 import { filterInjectionKey, type LabelStatus } from '@dql-kit/vue-headless'
 import { computed, defineComponent, h, inject, ref, type Component, type PropType } from 'vue'
 
+// `value` accepts any JSON-shaped condition value — string, number,
+// arrays, { amount, unit } objects for relative datetimes, etc. Using
+// `default: undefined` here would let TS narrow `props.value` to
+// `undefined`; we leave the prop validator without a default so the
+// type stays `unknown | undefined`.
 const baseProps = {
   fieldKey: { type: String, required: true as const },
   field: { type: Object as PropType<FieldDef>, required: true as const },
   op: { type: String, required: true as const },
-  value: { type: null as unknown as PropType<unknown>, default: undefined },
+  value: { type: null as unknown as PropType<unknown>, required: false as const },
   onUpdate: {
     type: Function as PropType<(v: unknown) => void>,
     required: true as const,

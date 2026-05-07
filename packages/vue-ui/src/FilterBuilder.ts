@@ -54,10 +54,11 @@ const resolveRenderer = (typeId: string, shape: ValueShape) => {
 // development.
 const isProductionMode = (): boolean => {
   try {
-    return (
-      typeof process !== 'undefined'
-      && (process as { env?: { NODE_ENV?: string } }).env?.NODE_ENV === 'production'
-    )
+    // Read NODE_ENV via globalThis so the package compiles under any
+    // runtime without depending on @types/node (browser bundlers replace
+    // process.env.NODE_ENV at build time, leaving the literal here).
+    const g = globalThis as { process?: { env?: { NODE_ENV?: string } } }
+    return g.process?.env?.NODE_ENV === 'production'
   } catch {
     return false
   }
