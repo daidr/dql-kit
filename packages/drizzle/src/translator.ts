@@ -55,7 +55,13 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
         `[dql-kit/drizzle] No SQL translator registered for op "${node.op}". Use Translator.registerOp().`,
       )
     }
-    return opFn(col, node.value)
+    const fieldDef = opts.schema.fields[node.field]
+    if (!fieldDef) {
+      throw new Error(
+        `[dql-kit/drizzle] AST references field "${node.field}" not declared in schema.`,
+      )
+    }
+    return opFn(col, node.value, { field: fieldDef })
   }
 
   return {

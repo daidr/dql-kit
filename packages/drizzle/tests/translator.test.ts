@@ -880,3 +880,153 @@ describe('createDrizzleTranslator — id<T> op coverage', () => {
     expect(rows.map((r) => r.authorId).sort()).toEqual([2, 3, 4])
   })
 })
+
+// Slice 8: array<U> field SQL coverage. Op names are shared with string
+// fields (`contains` / `notContains` / `isEmpty`) but the SQL is entirely
+// different — array uses `= ANY` / `<> ALL` / `cardinality = 0` and
+// `containsAll` uses PG's `@>` superset operator.
+const articleTagsTable = pgTable('article_tags', {
+  id: serial('id').primaryKey(),
+  tags: text('tags').array().notNull(),
+})
+const arraySchema = defineFilterSchema({
+  fields: {
+    tags: f.array(f.string()),
+  },
+})
+
+describe('createDrizzleTranslator — array<U> op coverage', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE article_tags (
+        id SERIAL PRIMARY KEY,
+        tags TEXT[] NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO article_tags (tags) VALUES
+        (ARRAY['urgent','blue']),
+        (ARRAY['blue','green']),
+        (ARRAY['urgent','red','green']),
+        (ARRAY['archive']),
+        (ARRAY[]::TEXT[]);
+    `)
+  })
+
+  test('contains uses PG = ANY (member check)', async () => {
+    const t = createDrizzleTranslator({ schema: arraySchema, table: articleTagsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'contains', value: 'urgent' }],
+    }
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.tags.includes('urgent'))).toBe(true)
+  })
+
+  test('notContains uses PG <> ALL (not-member check)', async () => {
+    const t = createDrizzleTranslator({ schema: arraySchema, table: articleTagsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'notContains', value: 'urgent' }],
+    }
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    expect(rows.every((r) => !r.tags.includes('urgent'))).toBe(true)
+    // Three rows: ['blue','green'], ['archive'], []
+    expect(rows).toHaveLength(3)
+  })
+
+  test('containsAll uses PG @> (superset check)', async () => {
+    const t = createDrizzleTranslator({ schema: arraySchema, table: articleTagsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'containsAll', value: ['urgent', 'green'] }],
+    }
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    // Only the row with both 'urgent' and 'green'.
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.tags.sort()).toEqual(['green', 'red', 'urgent'])
+  })
+
+  test('containsAll with empty array matches every row (PG @> {} is always true)', async () => {
+    const t = createDrizzleTranslator({ schema: arraySchema, table: articleTagsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'containsAll', value: [] }],
+    }
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(5)
+  })
+
+  test('isEmpty matches NULL or zero-cardinality arrays (cardinality semantics)', async () => {
+    const t = createDrizzleTranslator({ schema: arraySchema, table: articleTagsTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'isEmpty', value: undefined }],
+    }
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.tags).toEqual([])
+  })
+})
+
+// Numeric array column — locks in that the same translator path works for
+// non-text element types (PG INTEGER[]).
+const articleScoresTable = pgTable('article_scores', {
+  id: serial('id').primaryKey(),
+  scores: integer('scores').array().notNull(),
+})
+const numArraySchema = defineFilterSchema({
+  fields: {
+    scores: f.array(f.number()),
+  },
+})
+
+describe('createDrizzleTranslator — array<number> coverage', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE article_scores (
+        id SERIAL PRIMARY KEY,
+        scores INTEGER[] NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO article_scores (scores) VALUES
+        (ARRAY[1, 2, 3]),
+        (ARRAY[2, 4, 6]),
+        (ARRAY[5, 5, 5]);
+    `)
+  })
+
+  test('array<number> contains: PG = ANY with numeric value', async () => {
+    const t = createDrizzleTranslator({ schema: numArraySchema, table: articleScoresTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'scores', op: 'contains', value: 5 }],
+    }
+    const rows = await db.select().from(articleScoresTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.scores).toEqual([5, 5, 5])
+  })
+
+  test('array<number> containsAll: PG @> with numeric array', async () => {
+    const t = createDrizzleTranslator({ schema: numArraySchema, table: articleScoresTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'scores', op: 'containsAll', value: [2, 4] }],
+    }
+    const rows = await db.select().from(articleScoresTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.scores).toEqual([2, 4, 6])
+  })
+})

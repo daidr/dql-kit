@@ -19,6 +19,8 @@ const schema = defineFilterSchema({
     isActive: f.boolean(),
     publishedOn: f.date(),
     occurredAt: f.datetime(),
+    intTags: f.array(f.number()),
+    statusList: f.array(f.enum(['draft', 'published'] as const)),
   },
 })
 
@@ -324,6 +326,54 @@ describe('fromUrl', () => {
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
     expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
+  })
+
+  test('round-trip lossless on array<string> contains + containsAll + isEmpty', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'tags', op: 'contains', value: 'urgent' },
+        { field: 'tags', op: 'containsAll', value: ['a', 'b', 'c'] },
+        { field: 'tags', op: 'isEmpty', value: undefined },
+      ],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on array<number> containsAll keeps numeric typing', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'intTags', op: 'containsAll', value: [1, 2, 3] }],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    expect(obj.n[0].v.every((x: unknown) => typeof x === 'number')).toBe(true)
+    const result = fromUrl(url, schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on array<enum> containsAll preserves the discriminants', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'statusList', op: 'containsAll', value: ['draft', 'published'] }],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('decoded array<U> with mixed-type elements is dropped (value_type_mismatch)', () => {
+    const compact = {
+      c: 'and',
+      n: [{ f: 'tags', o: 'containsAll', v: ['a', 5] }],
+    }
+    const url = encodeURIComponent(JSON.stringify(compact))
+    const result = fromUrl(url, schema)
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
   })
 
   test('round-trip lossless on isEmpty (none shape)', () => {

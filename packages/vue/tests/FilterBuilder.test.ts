@@ -15,6 +15,11 @@ const schema = defineFilterSchema({
     priority: f.enum([0, 1, 2] as const, { label: 'Priority' }),
     publishedOn: f.date({ label: 'Published on' }),
     occurredAt: f.datetime({ label: 'Occurred at' }),
+    tags: f.array(f.string()),
+    scores: f.array(f.number()),
+    statusList: f.array(f.enum(['draft', 'published'] as const, {
+      valueLabels: { draft: '草稿', published: '已发布' },
+    })),
   },
 })
 
@@ -925,5 +930,107 @@ describe('FilterBuilder — id autocomplete renderer', () => {
       op: 'in',
       value: [1, 3],
     })
+  })
+})
+
+describe('FilterBuilder — array<U> renderer dispatch', () => {
+  it('array<string> + contains (single shape) renders the string text input', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'tags', op: 'contains', value: '' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('input.dql-input--string')
+    expect(input.exists()).toBe(true)
+    await input.setValue('urgent')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'tags',
+      op: 'contains',
+      value: 'urgent',
+    })
+  })
+
+  it('array<string> + containsAll (list shape) renders the StringTokenInput', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'tags', op: 'containsAll', value: ['a', 'b'] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-testid="token"]')).toHaveLength(2)
+
+    const input = wrapper.find('[data-testid="token-input"]')
+    await input.setValue('c')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'tags',
+      op: 'containsAll',
+      value: ['a', 'b', 'c'],
+    })
+  })
+
+  it('array<number> + containsAll routes to the NumberTokenInput', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'scores', op: 'containsAll', value: [1, 2] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const input = wrapper.find('[data-testid="token-input"]')
+    expect(input.attributes('type')).toBe('number')
+    await input.setValue('3')
+    await input.trigger('keydown', { key: 'Enter' })
+    const cond = filter.valid.value.children[0] as { value: unknown[] }
+    expect(cond.value).toEqual([1, 2, 3])
+    expect(typeof cond.value[2]).toBe('number')
+  })
+
+  it('array<enum> + containsAll renders the EnumMultiSelect with valueLabels', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'statusList', op: 'containsAll', value: ['draft'] }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="enum-multi"]').exists()).toBe(true)
+    // valueLabels resolved from itemType (the inner enum field).
+    expect(wrapper.find('[data-testid="enum-multi-option-draft"]').text()).toContain('草稿')
+    expect(wrapper.find('[data-testid="enum-multi-option-published"]').text()).toContain('已发布')
+    await wrapper
+      .find('[data-testid="enum-multi-option-published"] input')
+      .setValue(true)
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'statusList',
+      op: 'containsAll',
+      value: ['draft', 'published'],
+    })
+  })
+
+  it('array + isEmpty (none shape) renders no value input', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'tags', op: 'isEmpty', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.findAll('input.dql-input--string')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(false)
   })
 })

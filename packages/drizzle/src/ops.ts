@@ -1,5 +1,7 @@
+import { isRelativeUnit } from '@dql-kit/core'
 import {
   and as andSql,
+  arrayContains,
   between,
   eq,
   gt,
@@ -17,19 +19,43 @@ import {
   type AnyColumn,
   type SQL,
 } from 'drizzle-orm'
-import { isRelativeUnit } from '@dql-kit/core'
 import type { OpTranslator } from './types.ts'
 
 const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`)
 
+// Some ops share an op name across very different SQL semantics — `contains`
+// is ILIKE for string fields but `= ANY(col)` for PG array fields, and
+// `isEmpty` is `IS NULL OR = ''` for strings vs `cardinality(col) = 0` for
+// arrays. The op translator branches on field.typeId via the OpContext.
+
 export const drizzleOps: Record<string, OpTranslator> = {
   eq:           (col, v) => eq(col, v as never),
   neq:          (col, v) => ne(col, v as never),
-  contains:     (col, v) => ilike(col, `%${escapeLike(String(v))}%`),
-  notContains:  (col, v) => sql`${col} NOT ILIKE ${`%${escapeLike(String(v))}%`}`,
+  contains:     (col, v, ctx) => {
+    if (ctx.field.typeId === 'array') {
+      // PG: scalar = ANY(array_column)
+      return sql`${v} = ANY(${col})`
+    }
+    return ilike(col, `%${escapeLike(String(v))}%`)
+  },
+  notContains:  (col, v, ctx) => {
+    if (ctx.field.typeId === 'array') {
+      // PG: scalar <> ALL(array_column). NULL elements yield NULL → row
+      // dropped by WHERE, which matches "value not present" intent.
+      return sql`${v} <> ALL(${col})`
+    }
+    return sql`${col} NOT ILIKE ${`%${escapeLike(String(v))}%`}`
+  },
   startsWith:   (col, v) => ilike(col, `${escapeLike(String(v))}%`),
   endsWith:     (col, v) => ilike(col, `%${escapeLike(String(v))}`),
-  isEmpty:      (col)    => orSql(isNull(col), eq(col as AnyColumn, '' as never))!,
+  isEmpty:      (col, _v, ctx) => {
+    if (ctx.field.typeId === 'array') {
+      // Array empty: NULL or zero-length. cardinality(NULL) is NULL, so the
+      // explicit IS NULL branch is required to match the "no items" intent.
+      return orSql(isNull(col), sql`cardinality(${col}) = 0`)!
+    }
+    return orSql(isNull(col), eq(col as AnyColumn, '' as never))!
+  },
   in:           (col, v) => inArray(col, v as never[]),
   notIn:        (col, v) => notInArray(col, v as never[]),
   gt:           (col, v) => gt(col, v as never),
@@ -57,7 +83,16 @@ export const drizzleOps: Record<string, OpTranslator> = {
     }
     return sql`${col} >= NOW() - ${sql.raw(`INTERVAL '${a} ${unit}'`)}`
   },
-  containsAll:  (col, v) => sql`${col} @> ${v}`,
+  // PG: array @> array — left contains every element of right (superset).
+  // Use drizzle's arrayContains helper rather than inlining `@>` so the
+  // parameter is encoded as a PG ARRAY literal instead of a record/tuple.
+  // The helper rejects an empty array; emit a tautology to preserve PG's
+  // semantics (`x @> '{}'` is always true).
+  containsAll:  (col, v) => {
+    const arr = (v as unknown[]) ?? []
+    if (arr.length === 0) return sql`true`
+    return arrayContains(col, arr as never[])
+  },
 }
 
 export const passthrough = { andSql, orSql, isNotNull } as Record<string, unknown>

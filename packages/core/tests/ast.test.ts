@@ -20,6 +20,8 @@ const schema = defineFilterSchema({
     priority: f.enum([0, 1, 2] as const, { label: 'Priority' }),
     publishedOn: f.date({ label: 'Published on' }),
     occurredAt: f.datetime({ label: 'Occurred at' }),
+    intTags: f.array(f.number()),
+    statusList: f.array(f.enum(['draft', 'published'] as const)),
   },
 })
 
@@ -507,6 +509,70 @@ describe('prune', () => {
     }
     expect(prune(draft, schema).children).toHaveLength(0)
   })
+
+  test('array<string> contains keeps a single string element', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'contains', value: 'a' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('array<string> contains drops a non-string element', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'contains', value: 5 }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('array<number> contains keeps a single numeric element', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'intTags', op: 'contains', value: 7 }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('array<number> contains drops a string-typed element', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'intTags', op: 'contains', value: '7' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('array<enum> containsAll keeps a list of declared discriminants', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'statusList', op: 'containsAll', value: ['draft', 'published'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('array<enum> containsAll drops a list with an unknown discriminant', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'statusList', op: 'containsAll', value: ['draft', 'archived'] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(0)
+  })
+
+  test('array isEmpty (none shape) is kept with no value', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'isEmpty' }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
+
+  test('array<number> containsAll with empty array is kept (well-formed list)', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'intTags', op: 'containsAll', value: [] }],
+    }
+    expect(prune(draft, schema).children).toHaveLength(1)
+  })
 })
 
 describe('validate', () => {
@@ -676,6 +742,33 @@ describe('validate', () => {
         code: 'value_type_mismatch',
         expected: 'enum',
       })
+    }
+  })
+
+  test('reports value_type_mismatch on array<U> contains with wrong element type', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'intTags', op: 'contains', value: 'oops' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]).toMatchObject({
+        code: 'value_type_mismatch',
+        expected: 'array<number>',
+      })
+    }
+  })
+
+  test('reports value_type_mismatch on array<U> containsAll with mixed-type elements', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'tags', op: 'containsAll', value: ['a', 5] }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors[0]?.code).toBe('value_type_mismatch')
     }
   })
 

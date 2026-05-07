@@ -55,7 +55,16 @@ export const FilterBuilder = defineComponent({
       const fieldDef = s && cond.field ? s.fields[cond.field] : undefined
       const ops = fieldDef?.ops ?? []
       const op = fieldDef && cond.op ? fieldDef.ops.find((o) => o.name === cond.op) : undefined
-      const renderer = fieldDef && op ? resolveRenderer(fieldDef.typeId, op.valueShape) : undefined
+      // For array<U> fields the renderer operates on the element type, so
+      // resolve via `itemType` (the inner scalar Field) rather than the
+      // outer 'array' wrapper. This routes array<string>+containsAll to
+      // StringTokenInput, array<enum>+containsAll to EnumMultiSelect, etc.
+      const rendererField =
+        fieldDef && fieldDef.typeId === 'array' && fieldDef.itemType
+          ? fieldDef.itemType
+          : fieldDef
+      const renderer =
+        rendererField && op ? resolveRenderer(rendererField.typeId, op.valueShape) : undefined
 
       const fieldSelect = h(
         'select',
@@ -100,10 +109,10 @@ export const FilterBuilder = defineComponent({
         : null
 
       const valueNode =
-        renderer && op && fieldDef && op.valueShape !== 'none' && cond.field && cond.op
+        renderer && op && rendererField && op.valueShape !== 'none' && cond.field && cond.op
           ? h(renderer, {
               fieldKey: cond.field,
-              field: fieldDef,
+              field: rendererField,
               op: cond.op,
               value: cond.value,
               onUpdate: (v: unknown) =>
