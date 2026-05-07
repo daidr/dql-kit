@@ -1,5 +1,25 @@
-import { isGroup, type DraftCondition, type DraftGroup, type DraftNode, type FieldDef, type Label, type ValueShape } from '@dql-kit/core'
-import { computed, defineComponent, h, provide, type PropType, type VNode } from 'vue'
+import {
+  isGroup,
+  type DraftCondition,
+  type DraftGroup,
+  type DraftNode,
+  type FieldDef,
+  type Label,
+  type OpDef,
+  type ValidNode,
+  type ValueShape,
+} from '@dql-kit/core'
+import {
+  computed,
+  defineComponent,
+  h,
+  onBeforeUnmount,
+  onMounted,
+  provide,
+  ref,
+  type PropType,
+  type VNode,
+} from 'vue'
 import { filterInjectionKey } from './inject.ts'
 import { getFieldRenderer } from './registry.ts'
 import {
@@ -52,6 +72,13 @@ const fallbackRenderer = (typeId: string) => {
   return StringInput
 }
 
+const countConditions = (node: ValidNode): number => {
+  if ('combinator' in node) {
+    return node.children.reduce((sum, c) => sum + countConditions(c), 0)
+  }
+  return 1
+}
+
 export const FilterBuilder = defineComponent({
   name: 'FilterBuilder',
   props: {
@@ -64,7 +91,7 @@ export const FilterBuilder = defineComponent({
       default: 'vertical-stack',
     },
   },
-  setup(props) {
+  setup(props, { slots }) {
     // Expose the active filter to descendant renderers (used by id
     // autocomplete to drive search.setQuery and read labelOf).
     provide(filterInjectionKey, props.filter)
@@ -86,28 +113,8 @@ export const FilterBuilder = defineComponent({
     const errorsAtPath = (path: number[]) =>
       errors.value.filter((e) => pathsEqual(e.path, path))
 
-    const renderCondition = (cond: DraftCondition, path: number[]): VNode => {
-      const s = schema.value
-      const fieldDef = s && cond.field ? s.fields[cond.field] : undefined
-      const ops = fieldDef?.ops ?? []
-      const op = fieldDef && cond.op ? fieldDef.ops.find((o) => o.name === cond.op) : undefined
-      // For array<U> fields the renderer operates on the element type, so
-      // resolve via `itemType` (the inner scalar Field) rather than the
-      // outer 'array' wrapper. This routes array<string>+containsAll to
-      // StringTokenInput, array<enum>+containsAll to EnumMultiSelect, etc.
-      const rendererField =
-        fieldDef && fieldDef.typeId === 'array' && fieldDef.itemType
-          ? fieldDef.itemType
-          : fieldDef
-      const renderer = (() => {
-        if (!rendererField || !op) return undefined
-        if (op.valueShape === 'none') return undefined
-        const resolved = resolveRenderer(rendererField.typeId, op.valueShape)
-        if (resolved) return resolved
-        return fallbackRenderer(rendererField.typeId)
-      })()
-
-      const fieldSelect = h(
+    const renderDefaultField = (cond: DraftCondition, path: number[]): VNode =>
+      h(
         'select',
         {
           class: 'dql-field-select',
@@ -127,39 +134,135 @@ export const FilterBuilder = defineComponent({
         ],
       )
 
-      const opSelect = fieldDef
-        ? h(
-            'select',
-            {
-              class: 'dql-op-select',
-              'data-testid': 'op-select',
-              value: cond.op ?? '',
-              onChange: (e: Event) => {
-                const v = (e.target as HTMLSelectElement).value
-                if (v === '') return
-                props.filter.actions.updateNode(path, { op: v })
-              },
-            },
-            [
-              h('option', { value: '' }, '— op —'),
-              ...ops.map((o) =>
-                h('option', { value: o.name }, resolveLabel(o.label, o.name)),
-              ),
-            ],
-          )
-        : null
+    const renderDefaultOperator = (
+      cond: DraftCondition,
+      path: number[],
+      fieldDef: FieldDef | undefined,
+      ops: OpDef[],
+    ): VNode | null => {
+      if (!fieldDef) return null
+      return h(
+        'select',
+        {
+          class: 'dql-op-select',
+          'data-testid': 'op-select',
+          value: cond.op ?? '',
+          onChange: (e: Event) => {
+            const v = (e.target as HTMLSelectElement).value
+            if (v === '') return
+            props.filter.actions.updateNode(path, { op: v })
+          },
+        },
+        [
+          h('option', { value: '' }, '— op —'),
+          ...ops.map((o) =>
+            h('option', { value: o.name }, resolveLabel(o.label, o.name)),
+          ),
+        ],
+      )
+    }
 
-      const valueNode =
-        renderer && op && rendererField && op.valueShape !== 'none' && cond.field && cond.op
-          ? h(renderer, {
-              fieldKey: cond.field,
-              field: rendererField,
-              op: cond.op,
-              value: cond.value,
-              onUpdate: (v: unknown) =>
-                props.filter.actions.updateNode(path, { value: v }),
-            })
-          : null
+    const renderDefaultValue = (
+      cond: DraftCondition,
+      path: number[],
+      rendererField: FieldDef | undefined,
+      op: OpDef | undefined,
+    ): VNode | null => {
+      if (!rendererField || !op) return null
+      if (op.valueShape === 'none') return null
+      if (!cond.field || !cond.op) return null
+      const renderer =
+        resolveRenderer(rendererField.typeId, op.valueShape)
+        ?? fallbackRenderer(rendererField.typeId)
+      return h(renderer, {
+        fieldKey: cond.field,
+        field: rendererField,
+        op: cond.op,
+        value: cond.value,
+        onUpdate: (v: unknown) => props.filter.actions.updateNode(path, { value: v }),
+      })
+    }
+
+    const renderCondition = (cond: DraftCondition, path: number[]): VNode => {
+      const s = schema.value
+      const fieldDef = s && cond.field ? s.fields[cond.field] : undefined
+      const ops = fieldDef?.ops ?? []
+      const op = fieldDef && cond.op ? fieldDef.ops.find((o) => o.name === cond.op) : undefined
+      const rendererField =
+        fieldDef && fieldDef.typeId === 'array' && fieldDef.itemType
+          ? fieldDef.itemType
+          : fieldDef
+
+      // Slot scopes — exposed on each row so consumers can replace
+      // sub-pieces (#operator, #value) or the whole row (#condition).
+      // Each scope carries setX helpers so the slot doesn't need to
+      // import the actions surface separately.
+      const setField = (key: string) =>
+        props.filter.actions.updateNode(path, { field: key })
+      const setOp = (opName: string) =>
+        props.filter.actions.updateNode(path, { op: opName })
+      const setValue = (v: unknown) =>
+        props.filter.actions.updateNode(path, { value: v })
+      const remove = () => props.filter.actions.removeNode(path)
+
+      const operatorNode = slots.operator
+        ? slots.operator({
+            path,
+            condition: cond,
+            field: fieldDef,
+            ops,
+            op,
+            setOp,
+            defaultRender: () => renderDefaultOperator(cond, path, fieldDef, ops),
+          })
+        : renderDefaultOperator(cond, path, fieldDef, ops)
+
+      const valueNode = slots.value
+        ? slots.value({
+            path,
+            condition: cond,
+            field: rendererField,
+            op,
+            value: cond.value,
+            setValue,
+            defaultRender: () => renderDefaultValue(cond, path, rendererField, op),
+          })
+        : renderDefaultValue(cond, path, rendererField, op)
+
+      const errs = errorsAtPath(path)
+
+      // #condition slot: replace the entire row. defaultRender below
+      // keeps the standard layout so consumers can render some custom
+      // wrapper around the default content.
+      if (slots.condition) {
+        return h(
+          'div',
+          {
+            class: ['dql-condition', errs.length > 0 ? 'dql-condition--error' : null].filter(
+              Boolean,
+            ) as string[],
+            'data-testid': 'condition',
+            'data-has-error': errs.length > 0 ? 'true' : 'false',
+          },
+          slots.condition({
+            path,
+            condition: cond,
+            field: fieldDef,
+            fieldOptions: fieldOptions.value,
+            op,
+            errors: errs,
+            setField,
+            setOp,
+            setValue,
+            remove,
+            defaultField: () => renderDefaultField(cond, path),
+            defaultOperator: () => renderDefaultOperator(cond, path, fieldDef, ops),
+            defaultValue: () => renderDefaultValue(cond, path, rendererField, op),
+          }),
+        )
+      }
+
+      const fieldSelect = renderDefaultField(cond, path)
 
       const removeBtn = h(
         'button',
@@ -167,15 +270,11 @@ export const FilterBuilder = defineComponent({
           type: 'button',
           class: 'dql-remove',
           'data-testid': 'remove-condition',
-          onClick: () => props.filter.actions.removeNode(path),
+          onClick: remove,
         },
         '×',
       )
 
-      // Inline error indicator. Library carries no localised strings —
-      // emit the error code as data-error-code so consumers can map it
-      // to their own message in CSS / JS.
-      const errs = errorsAtPath(path)
       const errorIndicator =
         errs.length > 0
           ? h(
@@ -201,7 +300,9 @@ export const FilterBuilder = defineComponent({
           'data-testid': 'condition',
           'data-has-error': errs.length > 0 ? 'true' : 'false',
         },
-        [fieldSelect, opSelect, valueNode, errorIndicator, removeBtn].filter(Boolean) as VNode[],
+        [fieldSelect, operatorNode, valueNode, errorIndicator, removeBtn].filter(
+          Boolean,
+        ) as VNode[],
       )
     }
 
@@ -226,8 +327,6 @@ export const FilterBuilder = defineComponent({
         ],
       )
 
-      // Non-root groups can be removed entirely; the root group is exempt
-      // (per DESIGN.md Q10: top-level group always persists, even empty).
       const removeGroupBtn = isRoot
         ? null
         : h(
@@ -291,49 +390,135 @@ export const FilterBuilder = defineComponent({
       )
     }
 
+    const renderDroppedNotice = (): VNode | null =>
+      props.filter.dropped.value.length > 0
+        ? h(
+            'div',
+            {
+              class: 'dql-dropped-notice',
+              'data-testid': 'dropped-notice',
+              'data-dropped-count': String(props.filter.dropped.value.length),
+              role: 'alert',
+            },
+            [
+              h(
+                'span',
+                { class: 'dql-dropped-message' },
+                `${props.filter.dropped.value.length} condition(s) dropped due to schema changes`,
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'dql-dropped-dismiss',
+                  'data-testid': 'dropped-dismiss',
+                  onClick: () => props.filter.dismissDropped(),
+                },
+                'Dismiss',
+              ),
+            ],
+          )
+        : null
+
+    // Popover-trigger variant state: open flag + DOM refs for outside-
+    // click detection. Listeners are attached on mount and torn down
+    // before unmount (SSR-safe — both hooks are client-only).
+    const popoverOpen = ref(false)
+    const triggerEl = ref<HTMLElement | null>(null)
+    const panelEl = ref<HTMLElement | null>(null)
+
+    const onDocMousedown = (e: MouseEvent) => {
+      if (!popoverOpen.value) return
+      const target = e.target as Node | null
+      if (!target) return
+      if (panelEl.value && panelEl.value.contains(target)) return
+      if (triggerEl.value && triggerEl.value.contains(target)) return
+      popoverOpen.value = false
+    }
+    const onDocKeydown = (e: KeyboardEvent) => {
+      if (popoverOpen.value && e.key === 'Escape') {
+        popoverOpen.value = false
+      }
+    }
+
+    onMounted(() => {
+      if (typeof document === 'undefined') return
+      document.addEventListener('mousedown', onDocMousedown)
+      document.addEventListener('keydown', onDocKeydown)
+    })
+    onBeforeUnmount(() => {
+      if (typeof document === 'undefined') return
+      document.removeEventListener('mousedown', onDocMousedown)
+      document.removeEventListener('keydown', onDocKeydown)
+    })
+
+    const triggerLabel = computed(() => {
+      const count = countConditions(props.filter.valid.value)
+      if (count === 0) return 'Filter'
+      return `${count} filter${count === 1 ? '' : 's'}`
+    })
+
     return () => {
-      // Schema-evolution notice. Library carries no localised strings —
-      // the count is exposed via data-dropped-count so consumer CSS / JS
-      // can swap the message. The default English copy matches DESIGN.md
-      // Q10 ("dropped due to schema changes").
-      const droppedNotice =
-        props.filter.dropped.value.length > 0
+      const droppedNotice = renderDroppedNotice()
+      const builder = renderGroup(draft.value, [])
+
+      if (props.variant === 'popover-trigger') {
+        const trigger = h(
+          'button',
+          {
+            type: 'button',
+            class: 'dql-popover-trigger',
+            'data-testid': 'popover-trigger',
+            'data-open': popoverOpen.value ? 'true' : 'false',
+            'data-condition-count': String(countConditions(props.filter.valid.value)),
+            'aria-expanded': popoverOpen.value ? 'true' : 'false',
+            onClick: () => {
+              popoverOpen.value = !popoverOpen.value
+            },
+            ref: (el) => {
+              triggerEl.value = el as HTMLElement | null
+            },
+          },
+          triggerLabel.value,
+        )
+
+        const panel = popoverOpen.value
           ? h(
               'div',
               {
-                class: 'dql-dropped-notice',
-                'data-testid': 'dropped-notice',
-                'data-dropped-count': String(props.filter.dropped.value.length),
-                role: 'alert',
+                class: 'dql-popover-panel',
+                'data-testid': 'popover-panel',
+                role: 'dialog',
+                ref: (el) => {
+                  panelEl.value = el as HTMLElement | null
+                },
               },
-              [
-                h(
-                  'span',
-                  { class: 'dql-dropped-message' },
-                  `${props.filter.dropped.value.length} condition(s) dropped due to schema changes`,
-                ),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    class: 'dql-dropped-dismiss',
-                    'data-testid': 'dropped-dismiss',
-                    onClick: () => props.filter.dismissDropped(),
-                  },
-                  'Dismiss',
-                ),
-              ],
+              [droppedNotice, builder].filter(Boolean) as VNode[],
             )
           : null
 
+        return h(
+          'div',
+          {
+            class: ['dql-filter-builder', 'dql-variant-popover-trigger'],
+            'data-testid': 'filter-builder',
+            'data-variant': 'popover-trigger',
+          },
+          [trigger, panel].filter(Boolean) as VNode[],
+        )
+      }
+
+      // vertical-stack (default)
       return h(
         'div',
         {
-          class: ['dql-filter-builder', `dql-variant-${props.variant}`],
+          class: ['dql-filter-builder', 'dql-variant-vertical-stack'],
           'data-testid': 'filter-builder',
+          'data-variant': 'vertical-stack',
         },
-        [droppedNotice, renderGroup(draft.value, [])].filter(Boolean) as VNode[],
+        [droppedNotice, builder].filter(Boolean) as VNode[],
       )
     }
   },
 })
+

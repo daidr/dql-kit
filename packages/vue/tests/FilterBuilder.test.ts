@@ -1419,6 +1419,283 @@ describe('FilterBuilder — custom type renderer dispatch', () => {
   })
 })
 
+describe('FilterBuilder — popover-trigger variant', () => {
+  it('renders only the trigger button by default; panel appears on click', async () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'popover-trigger' },
+      attachTo: document.body,
+    })
+    const trigger = wrapper.find('[data-testid="popover-trigger"]')
+    expect(trigger.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    expect(trigger.attributes('data-open')).toBe('false')
+
+    await trigger.trigger('click')
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    expect(trigger.attributes('data-open')).toBe('true')
+
+    // Click again to close.
+    await trigger.trigger('click')
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('button label reflects the current condition count', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'title', op: 'eq', value: 'a' },
+          { field: 'title', op: 'eq', value: 'b' },
+          { field: 'title', op: 'eq', value: 'c' },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'popover-trigger' },
+    })
+    const trigger = wrapper.find('[data-testid="popover-trigger"]')
+    expect(trigger.text()).toBe('3 filters')
+    expect(trigger.attributes('data-condition-count')).toBe('3')
+
+    // Empty filter → 'Filter'
+    const emptyFilter = useFilter({ schema, sync: 'none' })
+    const empty = mount(FilterBuilder, {
+      props: { filter: emptyFilter, variant: 'popover-trigger' },
+    })
+    expect(empty.find('[data-testid="popover-trigger"]').text()).toBe('Filter')
+    empty.unmount()
+
+    // Exactly one filter → singular 'filter'.
+    const singleFilter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'x' }],
+      },
+    })
+    const one = mount(FilterBuilder, {
+      props: { filter: singleFilter, variant: 'popover-trigger' },
+    })
+    expect(one.find('[data-testid="popover-trigger"]').text()).toBe('1 filter')
+    one.unmount()
+
+    wrapper.unmount()
+  })
+
+  it('Escape closes the panel', async () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'popover-trigger' },
+      attachTo: document.body,
+    })
+    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('clicking outside the panel closes it; clicking inside keeps it open', async () => {
+    const outside = document.createElement('div')
+    outside.setAttribute('data-testid', 'outside')
+    document.body.appendChild(outside)
+
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'popover-trigger' },
+      attachTo: document.body,
+    })
+    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
+
+    // Click inside the panel — stays open.
+    const panel = wrapper.find('[data-testid="popover-panel"]').element as HTMLElement
+    panel.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
+
+    // Click outside — closes.
+    outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
+
+    document.body.removeChild(outside)
+    wrapper.unmount()
+  })
+
+  it('listeners are torn down on unmount (no further close-on-Escape)', async () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'popover-trigger' },
+      attachTo: document.body,
+    })
+    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
+    wrapper.unmount()
+    // After unmount: dispatching Escape on document must not throw and
+    // must not affect any state (no panel exists anymore anyway).
+    expect(() =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })),
+    ).not.toThrow()
+  })
+
+  it('vertical-stack variant: builder is always visible (no trigger button)', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'vertical-stack' },
+    })
+    expect(wrapper.find('[data-testid="popover-trigger"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="group"]').exists()).toBe(true)
+    expect(wrapper.attributes('data-variant')).toBe('vertical-stack')
+  })
+})
+
+describe('FilterBuilder — slot overrides', () => {
+  // Build a minimally-valid #operator slot that wraps the default in a
+  // span we can detect from tests.
+  const operatorSlot = {
+    operator: ({ defaultRender }: { defaultRender: () => unknown }) =>
+      h('span', { 'data-testid': 'operator-slot-wrap' }, [defaultRender() as VNode]),
+  }
+  const valueSlot = {
+    value: ({ value, setValue }: { value: unknown, setValue: (v: unknown) => void }) =>
+      h('input', {
+        type: 'text',
+        'data-testid': 'value-slot-input',
+        value: typeof value === 'string' ? value : '',
+        onInput: (e: Event) => setValue((e.target as HTMLInputElement).value),
+      }),
+  }
+  const conditionSlot = {
+    condition: ({
+      defaultField,
+      defaultOperator,
+      defaultValue,
+      remove,
+    }: {
+      defaultField: () => unknown
+      defaultOperator: () => unknown
+      defaultValue: () => unknown
+      remove: () => void
+    }) =>
+      h('div', { 'data-testid': 'condition-slot-shell' }, [
+        defaultField() as VNode,
+        defaultOperator() as VNode | null,
+        defaultValue() as VNode | null,
+        h(
+          'button',
+          {
+            type: 'button',
+            'data-testid': 'condition-slot-remove',
+            onClick: remove,
+          },
+          'remove',
+        ),
+      ] as Array<VNode | null>),
+  }
+
+  it('#operator slot wraps the default operator select in vertical-stack', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'a' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'vertical-stack' },
+      slots: operatorSlot,
+    })
+    expect(wrapper.find('[data-testid="operator-slot-wrap"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="op-select"]').exists()).toBe(true)
+  })
+
+  it('#value slot replaces the value renderer and its setValue updates valid AST', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: '' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'vertical-stack' },
+      slots: valueSlot,
+    })
+    const slotInput = wrapper.find('[data-testid="value-slot-input"]')
+    expect(slotInput.exists()).toBe(true)
+    // Default StringInput should NOT be in the tree (slot replaced it).
+    expect(wrapper.find('input.dql-input--string').exists()).toBe(false)
+    await slotInput.setValue('via-slot')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'title',
+      op: 'eq',
+      value: 'via-slot',
+    })
+  })
+
+  it('#condition slot replaces the entire row but defaults can still be invoked', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'a' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'vertical-stack' },
+      slots: conditionSlot,
+    })
+    expect(wrapper.find('[data-testid="condition-slot-shell"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="field-select"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="op-select"]').exists()).toBe(true)
+    // Default remove button is suppressed (slot replaced it); the slot's
+    // remove button drives the action surface.
+    expect(wrapper.find('[data-testid="remove-condition"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="condition-slot-remove"]').trigger('click')
+    expect(filter.valid.value.children).toHaveLength(0)
+  })
+
+  it('slot overrides work identically inside popover-trigger panel', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: '' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter, variant: 'popover-trigger' },
+      slots: valueSlot,
+      attachTo: document.body,
+    })
+    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
+    const slotInput = wrapper.find('[data-testid="value-slot-input"]')
+    expect(slotInput.exists()).toBe(true)
+    expect(wrapper.find('input.dql-input--string').exists()).toBe(false)
+    await slotInput.setValue('inside-popover')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'title',
+      op: 'eq',
+      value: 'inside-popover',
+    })
+    wrapper.unmount()
+  })
+})
+
 describe('FilterBuilder — dropped[] schema-evolution notice', () => {
   it('hides the notice when dropped is empty', () => {
     const filter = useFilter({ schema, sync: 'none' })

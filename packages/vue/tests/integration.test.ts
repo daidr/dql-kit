@@ -344,6 +344,80 @@ describe('end-to-end: f.custom + registerFieldRenderer + registerOp', () => {
   })
 })
 
+// Slice 13: both variants on the same router-aware filter, with a
+// shared #value slot override that renders identical custom inputs in
+// both UIs. Exercises the slot system + popover behaviour + URL sync
+// in one integrated harness.
+describe('end-to-end: vertical-stack + popover-trigger sharing one slot override', () => {
+  it('renders identical slot content in both variants and keeps URL state shared', async () => {
+    const variantSchema = defineFilterSchema({
+      fields: {
+        title: f.string(),
+      },
+    })
+    const filter = useFilter({
+      schema: variantSchema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'shared' }],
+      },
+    })
+    const valueSlot = {
+      value: ({
+        value,
+        setValue,
+      }: {
+        value: unknown
+        setValue: (v: unknown) => void
+      }) =>
+        h('input', {
+          type: 'text',
+          'data-testid': 'shared-slot',
+          value: typeof value === 'string' ? value : '',
+          onInput: (e: Event) => setValue((e.target as HTMLInputElement).value),
+        }),
+    }
+
+    const stack = mount(FilterBuilder, {
+      props: { filter, variant: 'vertical-stack' },
+      slots: valueSlot,
+      attachTo: document.body,
+    })
+    expect(stack.find('[data-testid="shared-slot"]').exists()).toBe(true)
+    await stack.find('[data-testid="shared-slot"]').setValue('via-stack')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'title',
+      op: 'eq',
+      value: 'via-stack',
+    })
+
+    // Mount the popover variant against the same filter — slot override
+    // applies identically and shares state via the composable.
+    const pop = mount(FilterBuilder, {
+      props: { filter, variant: 'popover-trigger' },
+      slots: valueSlot,
+      attachTo: document.body,
+    })
+    expect(pop.find('[data-testid="popover-trigger"]').text()).toBe('1 filter')
+    await pop.find('[data-testid="popover-trigger"]').trigger('click')
+    expect(pop.find('[data-testid="popover-panel"]').exists()).toBe(true)
+    expect(pop.find('[data-testid="shared-slot"]').exists()).toBe(true)
+    await pop.find('[data-testid="shared-slot"]').setValue('via-popover')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'title',
+      op: 'eq',
+      value: 'via-popover',
+    })
+    // Both UIs reflect the shared filter state immediately.
+    const stackInput = stack.find('[data-testid="shared-slot"]').element as HTMLInputElement
+    expect(stackInput.value).toBe('via-popover')
+
+    stack.unmount()
+    pop.unmount()
+  })
+})
+
 // Slice 11: schema-evolution end-to-end. Build an "old" URL by encoding
 // against a previous schema, mount useFilter against the "new" (narrower)
 // schema, and watch the dropped[] surface populate, the notice render,
