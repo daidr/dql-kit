@@ -878,6 +878,147 @@ describe('validate', () => {
     }
   })
 
+  // Slice 10: lock the public ValidationError contract — every code reachable
+  // through a representative draft, every detail field present and accurate,
+  // and `path` indices that index back into the draft tree.
+  test('all 5 codes are surfaced in a single multi-error fixture with accurate paths', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        // [0] incomplete (missing field)
+        { field: null, op: null },
+        // [1] unknown_field
+        { field: 'nope', op: 'eq', value: 'x' },
+        // [2] op_not_allowed
+        { field: 'title', op: 'gt', value: 'x' },
+        // [3] value_type_mismatch
+        { field: 'rating', op: 'eq', value: 'not-a-number' },
+        // [4] value_shape_mismatch
+        { field: 'rating', op: 'between', value: 5 },
+      ],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    const codeAtPath = (path: number[]) =>
+      result.errors.find(
+        (e) =>
+          e.path.length === path.length && e.path.every((v, i) => v === path[i]),
+      )?.code
+    expect(codeAtPath([0])).toBe('incomplete')
+    expect(codeAtPath([1])).toBe('unknown_field')
+    expect(codeAtPath([2])).toBe('op_not_allowed')
+    expect(codeAtPath([3])).toBe('value_type_mismatch')
+    expect(codeAtPath([4])).toBe('value_shape_mismatch')
+  })
+
+  test('incomplete error carries `missing: "field" | "op" | "value"`', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        { field: null, op: null },
+        { field: 'title', op: null },
+        { field: 'title', op: 'eq' },
+      ],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.errors).toEqual([
+      { path: [0], code: 'incomplete', missing: 'field' },
+      { path: [1], code: 'incomplete', missing: 'op' },
+      { path: [2], code: 'incomplete', missing: 'value' },
+    ])
+  })
+
+  test('unknown_field error carries the offending field name', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'mystery', op: 'eq', value: 'x' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.errors[0]).toEqual({
+      path: [0],
+      code: 'unknown_field',
+      field: 'mystery',
+    })
+  })
+
+  test('op_not_allowed carries field + op so UI can localise both', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'gt', value: 'x' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.errors[0]).toEqual({
+      path: [0],
+      code: 'op_not_allowed',
+      field: 'title',
+      op: 'gt',
+    })
+  })
+
+  test('value_type_mismatch carries expected + got type labels', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'eq', value: 'oops' }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.errors[0]).toEqual({
+      path: [0],
+      code: 'value_type_mismatch',
+      expected: 'number',
+      got: 'string',
+    })
+  })
+
+  test('value_shape_mismatch carries op + expected shape', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: 5 }],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.errors[0]).toEqual({
+      path: [0],
+      code: 'value_shape_mismatch',
+      op: 'between',
+      expected: 'pair',
+    })
+  })
+
+  test('paths address nested condition positions exactly', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        { field: 'title', op: 'eq', value: 'a' },
+        {
+          combinator: 'or',
+          children: [
+            { field: 'title', op: 'eq', value: 'b' },
+            // [1, 1] — error two levels deep
+            { field: 'mystery', op: 'eq', value: 'x' },
+          ],
+        },
+      ],
+    }
+    const result = validate(draft, schema)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.errors[0]).toMatchObject({
+      path: [1, 1],
+      code: 'unknown_field',
+      field: 'mystery',
+    })
+  })
+
   test('reports paths into nested groups', () => {
     const draft: DraftAST = {
       combinator: 'and',

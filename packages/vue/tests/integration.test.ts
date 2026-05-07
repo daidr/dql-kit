@@ -183,3 +183,53 @@ describe('end-to-end: nested filter via actions → URL → pglite', () => {
     expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(true)
   })
 })
+
+// Slice 10: drive each of the 5 error codes through the composable and
+// assert the UI reflects the right code on the right row, then watch the
+// indicator clear reactively as the user fixes each issue.
+describe('end-to-end: validation error UI', () => {
+  it('walks a single condition through every error code and back to clean', async () => {
+    const filter = useFilter({ schema: nestedSchema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+
+    const codeAt = (i: number) =>
+      wrapper.findAll('[data-testid="condition"]')[i]
+        ?.find('[data-testid="condition-error"]')
+        ?.attributes('data-error-code')
+
+    // 1. incomplete (missing field) — addCondition with no field/op/value.
+    filter.actions.addCondition([])
+    await wrapper.vm.$nextTick()
+    expect(codeAt(0)).toBe('incomplete')
+
+    // 2. unknown_field — set a field that doesn't exist in the schema.
+    filter.actions.updateNode([0], { field: 'mystery' })
+    await wrapper.vm.$nextTick()
+    expect(codeAt(0)).toBe('unknown_field')
+
+    // 3. op_not_allowed — pick a real string field but a numeric op.
+    filter.actions.updateNode([0], { field: 'title', op: 'gt', value: 'x' })
+    await wrapper.vm.$nextTick()
+    expect(codeAt(0)).toBe('op_not_allowed')
+
+    // 4. value_type_mismatch — switch to a number field but supply a string.
+    filter.actions.updateNode([0], { field: 'rating', op: 'eq', value: 'oops' })
+    await wrapper.vm.$nextTick()
+    expect(codeAt(0)).toBe('value_type_mismatch')
+
+    // 5. value_shape_mismatch — between expects a pair, supply a scalar.
+    filter.actions.updateNode([0], { op: 'between', value: 5 })
+    await wrapper.vm.$nextTick()
+    expect(codeAt(0)).toBe('value_shape_mismatch')
+
+    // Fix the value — UI clears.
+    filter.actions.updateNode([0], { value: [1, 5] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="condition-error"]').exists()).toBe(false)
+    expect(filter.errors.value).toEqual([])
+    expect(filter.valid.value).toEqual({
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'between', value: [1, 5] }],
+    })
+  })
+})

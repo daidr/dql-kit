@@ -133,6 +133,44 @@ describe('useFilter — errors surface', () => {
     expect(filter.errors.value.length).toBeGreaterThan(0)
     expect(filter.errors.value[0]?.code).toBe('incomplete')
   })
+
+  it('errors recompute on every draft edit without an explicit re-validate', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    // Start with an incomplete condition.
+    filter.actions.addCondition([])
+    expect(filter.errors.value[0]?.code).toBe('incomplete')
+    // Pick a field — still incomplete (op missing).
+    filter.actions.updateNode([0], { field: 'title' })
+    expect(filter.errors.value[0]).toMatchObject({ code: 'incomplete', missing: 'op' })
+    // Pick an op — value still missing.
+    filter.actions.updateNode([0], { op: 'eq' })
+    expect(filter.errors.value[0]).toMatchObject({ code: 'incomplete', missing: 'value' })
+    // Type-mismatched value — code flips to value_type_mismatch.
+    filter.actions.updateNode([0], { field: 'rating', op: 'eq', value: 'oops' })
+    expect(filter.errors.value[0]).toMatchObject({ code: 'value_type_mismatch' })
+    // Fix the value — errors clears.
+    filter.actions.updateNode([0], { value: 5 })
+    expect(filter.errors.value).toEqual([])
+  })
+
+  it('multiple errors at distinct paths surface together', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'mystery', op: 'eq', value: 'x' },
+          { field: 'rating', op: 'eq', value: 'oops' },
+        ],
+      },
+    })
+    expect(filter.errors.value).toHaveLength(2)
+    expect(filter.errors.value.map((e) => [e.code, e.path])).toEqual([
+      ['unknown_field', [0]],
+      ['value_type_mismatch', [1]],
+    ])
+  })
 })
 
 describe('useFilter — async id integration', () => {

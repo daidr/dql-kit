@@ -1168,3 +1168,117 @@ describe('FilterBuilder — nested groups', () => {
     expect(depths).toEqual(['0', '1', '2'])
   })
 })
+
+describe('FilterBuilder — validation error indicators', () => {
+  it('clean draft has no error indicator and no error class on the condition row', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'a' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const condition = wrapper.find('[data-testid="condition"]')
+    expect(condition.attributes('data-has-error')).toBe('false')
+    expect(condition.classes()).not.toContain('dql-condition--error')
+    expect(wrapper.find('[data-testid="condition-error"]').exists()).toBe(false)
+  })
+
+  it.each([
+    ['incomplete', { field: null, op: null }],
+    ['unknown_field', { field: 'mystery', op: 'eq', value: 'x' }],
+    ['op_not_allowed', { field: 'title', op: 'gt', value: 'x' }],
+    ['value_type_mismatch', { field: 'rating', op: 'eq', value: 'oops' }],
+    ['value_shape_mismatch', { field: 'rating', op: 'between', value: 5 }],
+  ])('renders an indicator with data-error-code=%s for the offending row', (code, child) => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [child as { field: string | null, op: string | null, value?: unknown }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const condition = wrapper.find('[data-testid="condition"]')
+    expect(condition.attributes('data-has-error')).toBe('true')
+    expect(condition.classes()).toContain('dql-condition--error')
+    const indicator = wrapper.find('[data-testid="condition-error"]')
+    expect(indicator.exists()).toBe(true)
+    expect(indicator.attributes('data-error-code')).toBe(code)
+    expect(indicator.attributes('aria-label')).toBe(code)
+  })
+
+  it('only the offending row gets the error class when multiple rows coexist', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'title', op: 'eq', value: 'ok' },
+          { field: 'rating', op: 'eq', value: 'oops' },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const conditions = wrapper.findAll('[data-testid="condition"]')
+    expect(conditions[0]?.attributes('data-has-error')).toBe('false')
+    expect(conditions[1]?.attributes('data-has-error')).toBe('true')
+    expect(conditions[1]?.attributes('data-error-code' as never)).toBeUndefined()
+    // Indicator lives on the row, code is on the indicator span.
+    const indicators = wrapper.findAll('[data-testid="condition-error"]')
+    expect(indicators).toHaveLength(1)
+    expect(indicators[0]?.attributes('data-error-code')).toBe('value_type_mismatch')
+  })
+
+  it('error indicator clears reactively when the user fixes the offending value', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'rating', op: 'eq', value: 'oops' }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="condition-error"]').exists()).toBe(true)
+    // Fix the value through the composable.
+    filter.actions.updateNode([0], { value: 5 })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="condition-error"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="condition"]').attributes('data-has-error')).toBe('false')
+  })
+
+  it('error path resolves into a nested condition correctly', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'title', op: 'eq', value: 'a' },
+          {
+            combinator: 'or',
+            children: [
+              { field: 'title', op: 'eq', value: 'b' },
+              { field: 'mystery', op: 'eq', value: 'x' },
+            ],
+          },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const conditions = wrapper.findAll('[data-testid="condition"]')
+    // Three conditions total: [0], [1,0] (clean), [1,1] (unknown_field).
+    expect(conditions).toHaveLength(3)
+    expect(conditions[0]?.attributes('data-has-error')).toBe('false')
+    expect(conditions[1]?.attributes('data-has-error')).toBe('false')
+    expect(conditions[2]?.attributes('data-has-error')).toBe('true')
+    expect(
+      conditions[2]?.find('[data-testid="condition-error"]').attributes('data-error-code'),
+    ).toBe('unknown_field')
+  })
+})

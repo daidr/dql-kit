@@ -50,6 +50,14 @@ export const FilterBuilder = defineComponent({
       return Object.entries(s.fields).map(([key, def]) => ({ key, def }))
     })
 
+    const errors = computed(() => props.filter.errors.value)
+
+    const pathsEqual = (a: number[], b: number[]) =>
+      a.length === b.length && a.every((v, i) => v === b[i])
+
+    const errorsAtPath = (path: number[]) =>
+      errors.value.filter((e) => pathsEqual(e.path, path))
+
     const renderCondition = (cond: DraftCondition, path: number[]): VNode => {
       const s = schema.value
       const fieldDef = s && cond.field ? s.fields[cond.field] : undefined
@@ -131,10 +139,36 @@ export const FilterBuilder = defineComponent({
         '×',
       )
 
+      // Inline error indicator. Library carries no localised strings —
+      // emit the error code as data-error-code so consumers can map it
+      // to their own message in CSS / JS.
+      const errs = errorsAtPath(path)
+      const errorIndicator =
+        errs.length > 0
+          ? h(
+              'span',
+              {
+                class: 'dql-error-indicator',
+                'data-testid': 'condition-error',
+                'data-error-code': errs[0]!.code,
+                role: 'status',
+                'aria-label': errs[0]!.code,
+              },
+              '!',
+            )
+          : null
+
       return h(
         'div',
-        { class: 'dql-condition', 'data-testid': 'condition' },
-        [fieldSelect, opSelect, valueNode, removeBtn].filter(Boolean) as VNode[],
+        {
+          class: [
+            'dql-condition',
+            errs.length > 0 ? 'dql-condition--error' : null,
+          ].filter(Boolean) as string[],
+          'data-testid': 'condition',
+          'data-has-error': errs.length > 0 ? 'true' : 'false',
+        },
+        [fieldSelect, opSelect, valueNode, errorIndicator, removeBtn].filter(Boolean) as VNode[],
       )
     }
 
