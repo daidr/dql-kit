@@ -6,8 +6,9 @@ import {
 } from '@dql-kit/vue-headless'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { FilterBuilder } from '../src/index.ts'
+import * as mod from '../src/index.ts'
 
 const schema = defineFilterSchema({
   fields: {
@@ -769,6 +770,76 @@ describe('FilterBuilder — datetime inLast renderer', () => {
       op: 'inLast',
       value: { amount: 3, unit: 'week' },
     })
+  })
+})
+
+describe('FilterBuilder — relative-unit i18n labels', () => {
+  it('option text falls back to the unit key when no labels are registered', () => {
+    const { setRelativeUnitLabels } = mod
+    setRelativeUnitLabels({})
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('day')
+    expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('week')
+  })
+
+  it('static label map renders option text in the registered language', () => {
+    const { setRelativeUnitLabels } = mod
+    setRelativeUnitLabels({
+      minute: '分钟', hour: '小时', day: '天', week: '周', month: '月',
+    })
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('天')
+    expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('周')
+    // Reset for subsequent tests in the file (module-level state).
+    setRelativeUnitLabels({})
+  })
+
+  it('lazy-function labels stay live when the underlying ref changes (vue-i18n style)', async () => {
+    const { setRelativeUnitLabels } = mod
+    const locale = ref<'en' | 'zh'>('en')
+    const dict: Record<string, Record<string, string>> = {
+      en: { day: 'day', week: 'week' },
+      zh: { day: '天', week: '周' },
+    }
+    const t = (k: string) => dict[locale.value]![k] ?? k
+    setRelativeUnitLabels({
+      day: () => t('day'),
+      week: () => t('week'),
+    })
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('day')
+    expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('week')
+
+    locale.value = 'zh'
+    await nextTick()
+    expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('天')
+    expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('周')
+
+    setRelativeUnitLabels({})
   })
 })
 

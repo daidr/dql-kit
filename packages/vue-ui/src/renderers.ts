@@ -1,6 +1,7 @@
 import { RELATIVE_UNITS, type FieldDef, type Label, type RelativeUnit } from '@dql-kit/core'
 import { filterInjectionKey, type LabelStatus } from '@dql-kit/vue-headless'
 import { computed, defineComponent, h, inject, ref, watch, type Component, type PropType } from 'vue'
+import { resolveRelativeUnitLabel } from './i18n.ts'
 
 // `value` accepts any JSON-shaped condition value — string, number,
 // arrays, { amount, unit } objects for relative datetimes, etc. Using
@@ -623,7 +624,7 @@ export const DateTimeInLastInput = defineComponent({
               onChange: (e: Event) => updateUnit((e.target as HTMLSelectElement).value),
             },
             RELATIVE_UNITS.map((u) =>
-              h('option', { value: u, 'data-testid': `inlast-unit-${u}` }, u),
+              h('option', { value: u, 'data-testid': `inlast-unit-${u}` }, resolveRelativeUnitLabel(u)),
             ),
           ),
         ],

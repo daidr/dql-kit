@@ -20,4 +20,9 @@ export {
   defaultListRenderers,
   defaultRelativeRenderers,
 } from './renderers.ts'
+export {
+  setRelativeUnitLabels,
+  resolveRelativeUnitLabel,
+  type RelativeUnitLabels,
+} from './i18n.ts'
 export type { Variant } from './types.ts'
