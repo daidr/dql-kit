@@ -664,7 +664,20 @@ export const IdAutocompleteInput = defineComponent({
     return () =>
       h(
         'div',
-        { class: 'dql-input dql-input--id', 'data-testid': 'id-autocomplete' },
+        {
+          class: 'dql-input dql-input--id',
+          'data-testid': 'id-autocomplete',
+          // Close the suggestion list when focus leaves the wrapper. mousedown
+          // on results already preventDefaults so option clicks don't blur
+          // the search input — focusout only fires when the user truly tabs
+          // / clicks away.
+          onFocusout: (e: FocusEvent) => {
+            const next = e.relatedTarget as Node | null
+            const wrapper = e.currentTarget as Element | null
+            if (next && wrapper && wrapper.contains(next)) return
+            open.value = false
+          },
+        },
         [
           props.value !== undefined
             ? h(
@@ -768,7 +781,19 @@ export const IdMultiAutocompleteInput = defineComponent({
     return () =>
       h(
         'div',
-        { class: 'dql-input dql-input--id-multi', 'data-testid': 'id-multi-autocomplete' },
+        {
+          class: 'dql-input dql-input--id-multi',
+          'data-testid': 'id-multi-autocomplete',
+          // Symmetric with IdAutocompleteInput: close the suggestion list
+          // when focus genuinely leaves the wrapper. mousedown.preventDefault
+          // on each <li> keeps the input focused while clicking options.
+          onFocusout: (e: FocusEvent) => {
+            const next = e.relatedTarget as Node | null
+            const wrapper = e.currentTarget as Element | null
+            if (next && wrapper && wrapper.contains(next)) return
+            open.value = false
+          },
+        },
         [
           ...selected.value.map((id) =>
             h(
