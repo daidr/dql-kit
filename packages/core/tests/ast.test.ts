@@ -5,6 +5,11 @@ import {
   emptyAst,
   emptyDraft,
   f,
+  isArrayField,
+  isBuiltinField,
+  isEnumField,
+  isIdField,
+  isStringField,
   prune,
   validate,
 } from '../src/index.ts'
@@ -1130,5 +1135,42 @@ describe('astRefersTo', () => {
 
   test('returns false on empty ast', () => {
     expect(astRefersTo(emptyAst(), 'anything')).toBe(false)
+  })
+})
+
+describe('per-typeId builders preserve narrow types', () => {
+  test('f.id<ID>() return type carries ID phantom', () => {
+    const idSchema = defineFilterSchema({
+      fields: {
+        authorId: f.id<number>({ label: 'Author' }),
+        slug: f.id<string>({ label: 'Slug' }),
+      },
+    })
+    // Compile-time assertions — these would error if the phantom were lost.
+    const a: number | undefined = idSchema.fields.authorId.__idBrand
+    const s: string | undefined = idSchema.fields.slug.__idBrand
+    expect(a).toBeUndefined()
+    expect(s).toBeUndefined()
+    expect(idSchema.fields.authorId.typeId).toBe('id')
+    expect(idSchema.fields.slug.typeId).toBe('id')
+  })
+
+  test('f.enum<V>() return type carries enumValues with V', () => {
+    const s = defineFilterSchema({
+      fields: { status: f.enum(['draft', 'published'] as const) },
+    })
+    // Compile-time: `value` should be narrowed to 'draft' | 'published'.
+    const values = s.fields.status.enumValues.map((e) => e.value)
+    const v: ('draft' | 'published')[] = values
+    expect(v).toEqual(['draft', 'published'])
+  })
+
+  test('type guards narrow correctly', () => {
+    expect(isStringField(f.string())).toBe(true)
+    expect(isStringField(f.number())).toBe(false)
+    expect(isIdField(f.id())).toBe(true)
+    expect(isEnumField(f.enum(['a']))).toBe(true)
+    expect(isArrayField(f.array(f.string()))).toBe(true)
+    expect(isBuiltinField(f.custom({ typeId: 'app:foo', ops: [] }))).toBe(false)
   })
 })

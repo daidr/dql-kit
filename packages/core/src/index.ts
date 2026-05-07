@@ -11,3 +11,14 @@ export {
 } from './ast.ts'
 export { COMPACT_KEYS, toUrl, fromUrl } from './url.ts'
 export { RELATIVE_UNITS, isRelativeUnit, type RelativeUnit } from './check.ts'
+export {
+  isStringField,
+  isNumberField,
+  isBooleanField,
+  isEnumField,
+  isDateField,
+  isDateTimeField,
+  isIdField,
+  isArrayField,
+  isBuiltinField,
+} from './field-guards.ts'

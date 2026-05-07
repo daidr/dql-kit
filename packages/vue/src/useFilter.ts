@@ -96,7 +96,10 @@ export const useFilter = <S extends FilterSchema>(
   // FetcherMap is captured at hook-call time. Treating it as immutable
   // for the lifetime of a useFilter instance keeps the orchestrator
   // simple — if callers want hot-swap fetchers they can re-mount.
-  const fetcherMap: FetcherMap = opts.fetchers ?? {}
+  // The public `fetchers` option is the schema-strict `FetcherMapFor<S>`,
+  // but internally we treat it as the loose `FetcherMap` (any IdFetcher)
+  // since the orchestrator dispatches by string fieldKey at runtime.
+  const fetcherMap: FetcherMap = (opts.fetchers ?? {}) as FetcherMap
   const fetcherFor = (fieldKey: string): IdFetcher | undefined => fetcherMap[fieldKey]
 
   const schemaRef: ComputedRef<S | undefined> = computed(() =>

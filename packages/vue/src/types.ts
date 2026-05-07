@@ -4,6 +4,7 @@ import type {
   FieldDef,
   FilterSchema,
   IdFetcher,
+  IdField,
   Item,
   ValidAST,
   ValidationError,
@@ -12,29 +13,45 @@ import type { Component, ComputedRef, Ref } from 'vue'
 
 export type SyncMode = 'url' | 'none'
 
-// Map of fieldKey → IdFetcher. Provided per-useFilter (not on the schema)
-// so the same schema constant can be shared by frontend and backend; the
-// backend has no concept of fetchers.
+// Open structural form — accepts any string→IdFetcher map. Used as the
+// loose default when the schema's field types aren't recoverable
+// (e.g. `useFilter({ schema: someRef })` with widened generic). Consumers
+// who want strict per-field ID typing get it for free via `FetcherMapFor<S>`
+// below — TS picks that branch automatically when `schema` is a concrete
+// schema constant.
 //
-// Value type uses `IdFetcher<any>` deliberately: each entry may have a
-// concrete ID type (e.g. `IdFetcher<number>` for an integer FK), and TS
-// would otherwise reject narrower fetchers being assigned to a wider
-// `IdFetcher<string | number>` (resolve's `ids: ID[]` is contravariant).
-// `any` here only relaxes the structural fit; consumers can declare
-// stricter typed maps in their own packages (e.g. story-verse's
-// `ArticleFetcherMap = { categoryId: IdFetcher<number> }`).
+// Value type uses `IdFetcher<any>` deliberately: TS otherwise rejects
+// narrower fetchers being assigned to a wider `IdFetcher<string | number>`
+// (resolve's `ids: ID[]` is contravariant).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type FetcherMap = Record<string, IdFetcher<any>>
+
+/**
+ * Strict, schema-derived fetcher map. For each field whose declared
+ * type is `IdField<ID>`, the corresponding entry is an
+ * `IdFetcher<ID>` — so `f.id<number>()` requires (and only accepts)
+ * an `IdFetcher<number>`. Non-id fields are excluded from the map.
+ *
+ * All entries are optional: a field with no fetcher just skips async
+ * search/resolve and falls back to `'#<id>'` for labels.
+ */
+export type FetcherMapFor<S extends FilterSchema> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [K in keyof S['fields'] as S['fields'][K] extends IdField<any> ? K : never]?:
+    S['fields'][K] extends IdField<infer ID> ? IdFetcher<ID> : never
+}
 
 export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
   schema: S | Ref<S | undefined>
   /**
    * Map of `f.id` field keys → async fetchers for label search/resolve.
-   * Only required for fields whose typeId is 'id'; missing entries make
-   * those fields silently skip async work (id values still flow through
-   * the AST, only labels resolve to '#<id>' fallback in the UI).
+   * Strictly typed against the schema: keys are limited to `IdField`
+   * field names, values must match each field's declared ID type.
+   * Missing entries make those fields silently skip async work (id
+   * values still flow through the AST, only labels resolve to '#<id>'
+   * fallback in the UI).
    */
-  fetchers?: FetcherMap
+  fetchers?: FetcherMapFor<S>
   initial?: ValidAST
   sync?: SyncMode
   queryKey?: string

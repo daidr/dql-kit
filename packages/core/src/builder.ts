@@ -1,5 +1,17 @@
 import { builtinOps } from './ops.ts'
-import type { FieldDef, Label, OpDef } from './types.ts'
+import type {
+  ArrayField,
+  BooleanField,
+  DateField,
+  DateTimeField,
+  EnumField,
+  FieldDef,
+  IdField,
+  Label,
+  NumberField,
+  OpDef,
+  StringField,
+} from './types.ts'
 
 type CommonOpts = { label?: Label, group?: string }
 
@@ -30,9 +42,10 @@ const opSets = {
   array:    [builtinOps.contains, builtinOps.notContains, builtinOps.containsAll, builtinOps.isEmpty],
 }
 
-const make = (def: FieldDef): FieldDef => def
-
-const augment = <T extends FieldDef>(field: T) =>
+// `withOps` mutates ops in-place via spread. Generic over the concrete
+// per-typeId interface so chaining preserves the narrow type
+// (e.g. `f.string().withOps([...])` still returns StringField).
+const augment = <T extends FieldDef>(field: T): T & { withOps(extra: OpDef[]): T } =>
   Object.assign(field, {
     withOps(extra: OpDef[]): T {
       return augment({ ...field, ops: [...field.ops, ...extra] }) as T
@@ -40,41 +53,64 @@ const augment = <T extends FieldDef>(field: T) =>
   })
 
 export const f = {
-  string(opts: CommonOpts = {}): FieldDef {
-    return augment(make({ typeId: 'string', ops: opSets.string, ...opts }))
+  string(opts: CommonOpts = {}): StringField {
+    return augment({ typeId: 'string', ops: opSets.string, ...opts } as StringField)
   },
-  number(opts: CommonOpts = {}): FieldDef {
-    return augment(make({ typeId: 'number', ops: opSets.number, ...opts }))
+  number(opts: CommonOpts = {}): NumberField {
+    return augment({ typeId: 'number', ops: opSets.number, ...opts } as NumberField)
   },
-  boolean(opts: CommonOpts = {}): FieldDef {
-    return augment(make({ typeId: 'boolean', ops: opSets.boolean, ...opts }))
+  boolean(opts: CommonOpts = {}): BooleanField {
+    return augment({ typeId: 'boolean', ops: opSets.boolean, ...opts } as BooleanField)
   },
-  enum<V extends string | number>(values: ReadonlyArray<V>, opts: EnumOpts<V> = {}): FieldDef {
+  enum<V extends string | number>(
+    values: ReadonlyArray<V>,
+    opts: EnumOpts<V> = {},
+  ): EnumField<V> {
     const enumValues = values.map((v) => {
       const label = opts.valueLabels?.[v]
       return label === undefined ? { value: v } : { value: v, label }
     })
-    return augment(make({ typeId: 'enum', ops: opSets.enum, enumValues, ...opts }))
+    return augment({
+      typeId: 'enum',
+      ops: opSets.enum,
+      enumValues,
+      ...(opts.label !== undefined && { label: opts.label }),
+      ...(opts.group !== undefined && { group: opts.group }),
+    } as EnumField<V>)
   },
-  date(opts: CommonOpts = {}): FieldDef {
-    return augment(make({ typeId: 'date', ops: opSets.date, ...opts }))
+  date(opts: CommonOpts = {}): DateField {
+    return augment({ typeId: 'date', ops: opSets.date, ...opts } as DateField)
   },
-  datetime(opts: CommonOpts = {}): FieldDef {
-    return augment(make({ typeId: 'datetime', ops: opSets.datetime, ...opts }))
+  datetime(opts: CommonOpts = {}): DateTimeField {
+    return augment({ typeId: 'datetime', ops: opSets.datetime, ...opts } as DateTimeField)
   },
-  id(opts: CommonOpts = {}): FieldDef {
-    return augment(make({ typeId: 'id', ops: opSets.id, ...opts }))
+  // ID phantom is preserved through the return type so consumers reading
+  // `schema.fields.authorId` get back `IdField<number>` (or whatever ID
+  // they declared), even though the stored runtime FieldDef has no ID
+  // field.
+  id<ID extends string | number = string | number>(
+    opts: CommonOpts = {},
+  ): IdField<ID> {
+    return augment({ typeId: 'id', ops: opSets.id, ...opts } as IdField<ID>)
   },
-  array(itemType: FieldDef, opts: CommonOpts = {}): FieldDef {
-    return augment(make({ typeId: 'array', ops: opSets.array, itemType, ...opts }))
+  array<Item extends FieldDef>(
+    itemType: Item,
+    opts: CommonOpts = {},
+  ): ArrayField<Item> {
+    return augment({
+      typeId: 'array',
+      ops: opSets.array,
+      itemType,
+      ...opts,
+    } as ArrayField<Item>)
   },
   custom(opts: CustomOpts): FieldDef {
-    return augment(make({
+    return augment({
       typeId: opts.typeId,
       ops: opts.ops,
       ...(opts.label !== undefined && { label: opts.label }),
       ...(opts.group !== undefined && { group: opts.group }),
-    }))
+    })
   },
 }
 
