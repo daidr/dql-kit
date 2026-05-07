@@ -21,6 +21,7 @@ import { computed, isRef, ref, toRaw, watch, type ComputedRef, type Ref } from '
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
 import type {
+  CommitMode,
   FetcherMap,
   FetcherMapFor,
   FilterActions,
@@ -90,6 +91,7 @@ export const useFilter = <S extends FilterSchema>(
   opts: UseFilterOptions<S>,
 ): UseFilterReturn<S> => {
   const sync: SyncMode = opts.sync ?? 'none'
+  const commitMode: CommitMode = opts.commitMode ?? 'auto'
   const queryKey = opts.queryKey ?? 'filter'
   const persistMode = opts.persistDraft ?? 'none'
   const storageKey = PERSIST_KEY_PREFIX + queryKey
@@ -142,22 +144,55 @@ export const useFilter = <S extends FilterSchema>(
     return null
   }
 
-  const initialDraft = (): DraftAST => {
-    const persisted = readPersistedDraft()
-    if (persisted) return persisted
-    if (route && schemaRef.value) {
+  // Compute draft + committed AST seeds together so persistDraft + URL
+  // can stay independent: the URL is the canonical "last committed"
+  // state, while a persisted draft (if any) carries the user's
+  // in-progress edits across reloads. In `commitMode: 'manual'` this
+  // means the popover survives a refresh with the user's pending
+  // changes intact, but URL still reflects what was actually applied.
+  const computeInitialState = (): { draft: DraftAST, committedAst: ValidAST } => {
+    const s = schemaRef.value
+    let urlAst: ValidAST | undefined
+    if (route && s) {
       const raw = queryValueAsString(route.query[queryKey])
       if (raw.length > 0) {
-        const { ast, dropped: d } = fromUrl(raw, schemaRef.value)
+        const { ast, dropped: d } = fromUrl(raw, s)
         if (d.length > 0) dropped.value = d
-        return cloneDraft(ast) as DraftAST
+        urlAst = ast
       }
     }
-    if (opts.initial) return cloneDraft(opts.initial) as DraftAST
-    return emptyDraft()
+
+    const persisted = readPersistedDraft()
+    if (persisted) {
+      return {
+        draft: persisted,
+        committedAst: urlAst ?? (opts.initial ? cloneDraft(opts.initial) : emptyAst()),
+      }
+    }
+
+    if (urlAst) {
+      return {
+        draft: cloneDraft(urlAst) as DraftAST,
+        committedAst: urlAst,
+      }
+    }
+
+    if (opts.initial) {
+      return {
+        draft: cloneDraft(opts.initial) as DraftAST,
+        committedAst: opts.initial,
+      }
+    }
+
+    return { draft: emptyDraft(), committedAst: emptyAst() }
   }
 
-  const draft = ref<DraftAST>(initialDraft()) as Ref<DraftAST>
+  const initialState = computeInitialState()
+  const draft = ref<DraftAST>(initialState.draft) as Ref<DraftAST>
+  // The committed snapshot — what URL / persistDraft / external watchers
+  // observe. In `'auto'` mode an effect below mirrors `valid` into this
+  // ref live; in `'manual'` mode it only updates on explicit commit().
+  const committedValidRef = ref<ValidAST>(initialState.committedAst) as Ref<ValidAST>
 
   const debounceMs = opts.debounceMs ?? 250
   const orchestrator = createAsyncOrchestrator()
@@ -204,6 +239,41 @@ export const useFilter = <S extends FilterSchema>(
     const result = validateAst(plainDraft, s)
     return result.ok ? [] : result.errors
   })
+
+  const committedValid: ComputedRef<ValidAST> = computed(() => committedValidRef.value)
+
+  // AST equality via JSON serialisation. ValidAST is plain data with a
+  // stable field order from prune (combinator, children) / pruneCondition
+  // (field, op, value), so JSON.stringify is deterministic.
+  const astEqual = (a: ValidAST, b: ValidAST): boolean =>
+    JSON.stringify(a) === JSON.stringify(b)
+
+  const isDirty: ComputedRef<boolean> = computed(() => {
+    if (commitMode === 'auto') return false
+    return !astEqual(valid.value, committedValidRef.value)
+  })
+
+  const commit = (): void => {
+    if (commitMode === 'auto') return
+    // Snapshot current valid; clone so downstream mutations of either
+    // side don't bleed into the other.
+    committedValidRef.value = cloneDraft(toRaw(valid.value)) as ValidAST
+  }
+
+  const discard = (): void => {
+    if (commitMode === 'auto') return
+    draft.value = cloneDraft(toRaw(committedValidRef.value)) as DraftAST
+  }
+
+  // In 'auto' mode commit happens automatically on every draft change.
+  // The watcher below keeps committedValidRef in lock-step with valid,
+  // so URL / persistDraft writers (which observe committedValid) see
+  // edits flow through immediately.
+  if (commitMode === 'auto') {
+    watch(valid, (v) => {
+      committedValidRef.value = cloneDraft(toRaw(v)) as ValidAST
+    })
+  }
 
   const mutate = (fn: (d: DraftAST) => void): void => {
     const next = cloneDraft(toRaw(draft.value))
@@ -306,6 +376,11 @@ export const useFilter = <S extends FilterSchema>(
 
   const applyAst = (ast: ValidAST): void => {
     draft.value = cloneDraft(ast) as DraftAST
+    // applyAst is the "set the entire filter state" call (loading a
+    // saved preset, replaying an external AST, ...). In 'manual' mode
+    // we treat it as an implicit commit so URL / persistDraft reflect
+    // the new state without waiting for an explicit commit().
+    committedValidRef.value = cloneDraft(ast) as ValidAST
   }
 
   const toJSON = (): ValidAST => valid.value
@@ -361,26 +436,37 @@ export const useFilter = <S extends FilterSchema>(
   }
 
   if (sync === 'url' && router && route) {
+    // External URL change → reset both draft and committedValidRef.
+    // We compare against committedValidRef (not `valid`) because that's
+    // what we last *wrote* to the URL — guards against the watcher
+    // firing on our own writeback. Any uncommitted draft edits are
+    // discarded, matching how a user-initiated URL navigation would
+    // behave (back/forward, paste, share link).
     watch(
       () => queryValueAsString(route.query[queryKey]),
       (raw) => {
         const s = schemaRef.value
         if (!s) return
-        const currentEncoded = toUrl(valid.value)
+        const currentEncoded = toUrl(committedValidRef.value)
         if (currentEncoded === raw) return
         if (raw.length === 0) {
           if (draft.value.children.length > 0 || draft.value.combinator !== 'and') {
             draft.value = emptyDraft()
           }
+          committedValidRef.value = emptyAst()
           return
         }
         const { ast, dropped: d } = fromUrl(raw, s)
         if (d.length > 0) dropped.value = d
         draft.value = cloneDraft(ast) as DraftAST
+        committedValidRef.value = ast
       },
     )
 
-    watch(valid, (newVal) => {
+    // Outgoing writer observes committedValid. In 'auto' mode this
+    // updates on every keystroke (live edits → URL), in 'manual' it
+    // updates only when commit() runs (batch apply → URL).
+    watch(committedValid, (newVal) => {
       const encoded = toUrl(newVal)
       const cur = queryValueAsString(route.query[queryKey])
       if (cur === encoded) return
@@ -429,6 +515,10 @@ export const useFilter = <S extends FilterSchema>(
     fetchers: fetcherMap as FetcherMapFor<S>,
     draft,
     valid,
+    committedValid,
+    isDirty,
+    commit,
+    discard,
     errors,
     dropped,
     dismissDropped,

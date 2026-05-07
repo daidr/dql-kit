@@ -174,6 +174,105 @@ describe('useFilter — errors surface', () => {
     expect(filter.errors.value.length).toBeGreaterThan(0)
     expect(filter.errors.value[0]?.code).toBe('incomplete')
   })
+})
+
+describe('useFilter — commitMode', () => {
+  it("'auto' (default): committedValid mirrors valid live, isDirty stays false", async () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    expect(filter.isDirty.value).toBe(false)
+    expect(filter.committedValid.value).toEqual({ combinator: 'and', children: [] })
+
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'a' })
+    await nextTick()
+    expect(filter.isDirty.value).toBe(false)
+    expect(filter.committedValid.value).toEqual(filter.valid.value)
+  })
+
+  it("'auto': commit() and discard() are no-ops", async () => {
+    const filter = useFilter({ schema, sync: 'none', commitMode: 'auto' })
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'a' })
+    await nextTick()
+    const before = filter.committedValid.value
+    filter.commit()
+    expect(filter.committedValid.value).toEqual(before)
+    filter.discard()
+    expect(filter.draft.value.children).toHaveLength(1)
+  })
+
+  it("'manual': edits leave committedValid frozen until commit() is called", async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      commitMode: 'manual',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'initial' }],
+      },
+    })
+    expect(filter.committedValid.value.children).toEqual([
+      { field: 'title', op: 'eq', value: 'initial' },
+    ])
+
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'pending' })
+    await nextTick()
+
+    // valid sees the new condition immediately…
+    expect(filter.valid.value.children).toHaveLength(2)
+    // …but committedValid is still frozen on the initial state.
+    expect(filter.committedValid.value.children).toHaveLength(1)
+    expect(filter.isDirty.value).toBe(true)
+
+    filter.commit()
+    expect(filter.committedValid.value.children).toHaveLength(2)
+    expect(filter.isDirty.value).toBe(false)
+  })
+
+  it("'manual': discard() rolls draft back to committedValid", async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      commitMode: 'manual',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'initial' }],
+      },
+    })
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'pending' })
+    await nextTick()
+    expect(filter.isDirty.value).toBe(true)
+
+    filter.discard()
+    await nextTick()
+    expect(filter.draft.value.children).toEqual([
+      { field: 'title', op: 'eq', value: 'initial' },
+    ])
+    expect(filter.isDirty.value).toBe(false)
+  })
+
+  it("'manual': committedValid is independent of draft — mutating draft after commit doesn't bleed back", async () => {
+    const filter = useFilter({ schema, sync: 'none', commitMode: 'manual' })
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'a' })
+    filter.commit()
+    const snap = filter.committedValid.value
+    expect(snap.children).toHaveLength(1)
+
+    filter.actions.updateNode([0], { value: 'b' })
+    await nextTick()
+    // committedValid still the snapshot from before; only valid moves.
+    expect(filter.committedValid.value.children[0]).toMatchObject({ value: 'a' })
+    expect(filter.valid.value.children[0]).toMatchObject({ value: 'b' })
+  })
+
+  it("'manual': applyAst pins committedValid as well (implicit commit)", () => {
+    const filter = useFilter({ schema, sync: 'none', commitMode: 'manual' })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'preset' }],
+    }
+    filter.applyAst(ast)
+    expect(filter.committedValid.value).toEqual(ast)
+    expect(filter.isDirty.value).toBe(false)
+  })
 
   it('errors recompute on every draft edit without an explicit re-validate', () => {
     const filter = useFilter({ schema, sync: 'none' })

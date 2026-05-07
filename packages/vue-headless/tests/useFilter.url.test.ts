@@ -59,6 +59,7 @@ const buildHarness = async (
       filter = useFilter({
         schema,
         sync: options.sync,
+        commitMode: options.commitMode,
         queryKey: options.queryKey,
         initial: options.initial,
       }) as Filter
@@ -253,6 +254,89 @@ describe('useFilter — dropped[] schema evolution', () => {
     await flushPromises()
     expect(filter.dropped.value).toHaveLength(1)
     expect(filter.dropped.value[0]?.reason).toBe('unknown_field')
+    wrapper.unmount()
+  })
+})
+
+describe("useFilter — sync: 'url' + commitMode: 'manual'", () => {
+  it('actions in manual mode do NOT write to URL until commit() is called', async () => {
+    const { filter, router, wrapper, replaceCalls } = await buildHarness({
+      sync: 'url',
+      commitMode: 'manual',
+    })
+
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'pending' })
+    await flushPromises()
+
+    // No URL writes — manual mode batches edits until commit().
+    expect(replaceCalls).toHaveLength(0)
+    expect(router.currentRoute.value.query.filter).toBeUndefined()
+    expect(filter.isDirty.value).toBe(true)
+
+    filter.commit()
+    await flushPromises()
+
+    expect(replaceCalls.length).toBeGreaterThan(0)
+    expect(typeof router.currentRoute.value.query.filter).toBe('string')
+    expect(filter.isDirty.value).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('discard() in manual mode rolls draft back without touching URL', async () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'committed' }],
+    }
+    const encoded = toUrl(ast)
+    const { filter, router, wrapper, replaceCalls } = await buildHarness({
+      sync: 'url',
+      commitMode: 'manual',
+      initialPath: `/?filter=${encoded}`,
+    })
+    // Initial URL → both draft and committed reflect "committed".
+    expect(filter.committedValid.value).toEqual(ast)
+
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'staged' })
+    await flushPromises()
+    expect(filter.isDirty.value).toBe(true)
+
+    const writesBefore = replaceCalls.length
+    filter.discard()
+    await flushPromises()
+    expect(filter.isDirty.value).toBe(false)
+    expect(filter.draft.value.children).toEqual([
+      { field: 'title', op: 'eq', value: 'committed' },
+    ])
+    // No URL writeback — discard never crosses the commit boundary.
+    expect(replaceCalls.length).toBe(writesBefore)
+    // Router exposes the query value already URL-decoded; compare
+    // against the decoded form, not the encoded `toUrl()` string.
+    expect(router.currentRoute.value.query.filter).toBe(decodeURIComponent(encoded))
+    wrapper.unmount()
+  })
+
+  it('external URL navigation overrides pending draft and resets committedValid', async () => {
+    const { filter, router, wrapper } = await buildHarness({
+      sync: 'url',
+      commitMode: 'manual',
+    })
+
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'pending' })
+    await flushPromises()
+    expect(filter.isDirty.value).toBe(true)
+
+    const newAst: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'external' }],
+    }
+    await router.push({ query: { filter: toUrl(newAst) } })
+    await flushPromises()
+
+    // External URL change wipes out the unsaved draft and pins
+    // committedValid to the new state — same as a back/forward / paste.
+    expect(filter.draft.value.children).toEqual(newAst.children)
+    expect(filter.committedValid.value).toEqual(newAst)
+    expect(filter.isDirty.value).toBe(false)
     wrapper.unmount()
   })
 })

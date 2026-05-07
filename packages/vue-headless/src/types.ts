@@ -13,6 +13,21 @@ import type { Component, ComputedRef, Ref } from 'vue'
 
 export type SyncMode = 'url' | 'none'
 
+/**
+ * Controls when changes flow from the user-visible `valid` AST to the
+ * "outside world" — URL query params, sessionStorage, and any
+ * external watcher the consumer hooks up.
+ *
+ * - `'auto'` (default): every keystroke flows through immediately.
+ *   Matches the inline filter UX (filter sits on the page, edits apply
+ *   live).
+ * - `'manual'`: edits accumulate in `valid` only; the outside world
+ *   sees `committedValid`, which only updates when the consumer calls
+ *   `commit()`. Matches the popover / dialog "edit then apply" UX —
+ *   the user can fiddle without spamming URL writes / fetch reloads.
+ */
+export type CommitMode = 'auto' | 'manual'
+
 // Open structural form — accepts any string→IdFetcher map. Used as the
 // loose default when the schema's field types aren't recoverable
 // (e.g. `useFilter({ schema: someRef })` with widened generic). Consumers
@@ -54,6 +69,11 @@ export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
   fetchers?: FetcherMapFor<S>
   initial?: ValidAST
   sync?: SyncMode
+  /**
+   * When edits should reach URL / persistDraft / external watchers.
+   * Defaults to `'auto'` (live edits flow immediately).
+   */
+  commitMode?: CommitMode
   queryKey?: string
   debounceMs?: number
   persistDraft?: 'session' | 'none'
@@ -94,7 +114,34 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   // fetchers. Treated as immutable for the lifetime of the instance.
   fetchers: FetcherMapFor<S>
   draft: Ref<DraftAST>
+  /** Live valid AST derived from `draft`. Always reflects the latest edits. */
   valid: ComputedRef<ValidAST>
+  /**
+   * Last-committed valid AST. In `commitMode: 'auto'` this is identical
+   * to `valid`. In `'manual'` it lags behind until `commit()` is called
+   * — URL sync + persistDraft + any consumer-side watchers should
+   * observe THIS, not `valid`, to participate in the batch-commit
+   * lifecycle.
+   */
+  committedValid: ComputedRef<ValidAST>
+  /**
+   * True when `valid` differs from `committedValid` — i.e. the user
+   * has uncommitted edits in `'manual'` mode. Always `false` in
+   * `'auto'` mode.
+   */
+  isDirty: ComputedRef<boolean>
+  /**
+   * Promote the current `valid` to `committedValid`, triggering URL /
+   * persistDraft writers. No-op in `'auto'` mode (everything is
+   * already committed).
+   */
+  commit: () => void
+  /**
+   * Reset `draft` back to the contents of `committedValid` — wires up
+   * to a "cancel" / popover-close-without-apply gesture. No-op in
+   * `'auto'` mode.
+   */
+  discard: () => void
   errors: ComputedRef<ValidationError[]>
   // Nodes dropped by the URL codec on schema mismatch. Populated when
   // useFilter loads from a route query that referenced fields/ops/types
