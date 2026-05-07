@@ -878,6 +878,73 @@ describe('validate', () => {
     }
   })
 
+  test('custom-typed field accepts only its declared op set', () => {
+    const moneySchema = defineFilterSchema({
+      fields: {
+        price: f.custom({
+          typeId: 'money',
+          ops: [
+            { name: 'moneyEq', valueShape: 'single', label: () => 'is' },
+            { name: 'moneyGt', valueShape: 'single', label: () => 'is more than' },
+          ],
+        }),
+      },
+    })
+    // Declared op: kept.
+    const validDraft: DraftAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'price',
+          op: 'moneyEq',
+          value: { amount: 100, currency: 'USD' },
+        },
+      ],
+    }
+    expect(prune(validDraft, moneySchema).children).toHaveLength(1)
+    // Built-in op name (not in the custom field's op set): rejected.
+    const undeclaredDraft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'price', op: 'eq', value: 100 }],
+    }
+    expect(prune(undeclaredDraft, moneySchema).children).toHaveLength(0)
+    const validateResult = validate(undeclaredDraft, moneySchema)
+    expect(validateResult.ok).toBe(false)
+    if (!validateResult.ok) {
+      expect(validateResult.errors[0]).toMatchObject({
+        code: 'op_not_allowed',
+        field: 'price',
+        op: 'eq',
+      })
+    }
+  })
+
+  test('custom-typed field allows arbitrary JSON-compatible values for its declared shape', () => {
+    const moneySchema = defineFilterSchema({
+      fields: {
+        price: f.custom({
+          typeId: 'money',
+          ops: [{ name: 'moneyEq', valueShape: 'single', label: 'is' }],
+        }),
+      },
+    })
+    // Custom typeIds skip the primitive type check (no "number" / "string"
+    // expectation), so any non-array, non-relative-shaped value passes shape
+    // validation for `single`. This is the contract that lets `f.custom`
+    // model project-specific shapes like { amount, currency }.
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'price',
+          op: 'moneyEq',
+          value: { amount: 999, currency: 'EUR', meta: { source: 'invoice' } },
+        },
+      ],
+    }
+    expect(prune(draft, moneySchema).children).toHaveLength(1)
+  })
+
   // Slice 10: lock the public ValidationError contract — every code reachable
   // through a representative draft, every detail field present and accurate,
   // and `path` indices that index back into the draft tree.

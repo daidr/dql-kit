@@ -1,7 +1,13 @@
 import { defineFilterSchema, f, type Item } from '@dql-kit/core'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FilterBuilder, useFilter } from '../src/index.ts'
+import { defineComponent, h } from 'vue'
+import {
+  FilterBuilder,
+  registerFieldRenderer,
+  fieldRendererRegistry,
+  useFilter,
+} from '../src/index.ts'
 
 const schema = defineFilterSchema({
   fields: {
@@ -1280,6 +1286,136 @@ describe('FilterBuilder — validation error indicators', () => {
     expect(
       conditions[2]?.find('[data-testid="condition-error"]').attributes('data-error-code'),
     ).toBe('unknown_field')
+  })
+})
+
+describe('FilterBuilder — custom type renderer dispatch', () => {
+  // Each test uses a unique typeId so the warn-once dedup doesn't bleed
+  // across tests.
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    warnSpy.mockRestore()
+    fieldRendererRegistry.clear()
+  })
+
+  it('registerFieldRenderer routes a custom typeId to the registered component', async () => {
+    const updates: unknown[] = []
+    const MoneyInput = defineComponent({
+      props: {
+        fieldKey: { type: String, required: true as const },
+        field: { type: Object, required: true as const },
+        op: { type: String, required: true as const },
+        value: { type: null as unknown as () => unknown, default: undefined },
+        onUpdate: {
+          type: Function as unknown as () => (v: unknown) => void,
+          required: true as const,
+        },
+      },
+      setup(props) {
+        return () =>
+          h('input', {
+            type: 'text',
+            'data-testid': 'money-input',
+            value: typeof props.value === 'object' && props.value !== null
+              ? String((props.value as { amount?: number }).amount ?? '')
+              : '',
+            onInput: (e: Event) => {
+              const raw = (e.target as HTMLInputElement).value
+              const next = { amount: Number(raw), currency: 'USD' }
+              ;(props.onUpdate as (v: unknown) => void)(next)
+              updates.push(next)
+            },
+          })
+      },
+    })
+
+    registerFieldRenderer('money_unique_a', MoneyInput)
+
+    const moneySchema = defineFilterSchema({
+      fields: {
+        price: f.custom({
+          typeId: 'money_unique_a',
+          ops: [{ name: 'moneyEq', valueShape: 'single', label: 'is' }],
+        }),
+      },
+    })
+    const filter = useFilter({
+      schema: moneySchema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'price', op: 'moneyEq', value: { amount: 100, currency: 'USD' } },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const moneyInput = wrapper.find('[data-testid="money-input"]')
+    expect(moneyInput.exists()).toBe(true)
+    expect(warnSpy).not.toHaveBeenCalled()
+
+    await moneyInput.setValue('250')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'price',
+      op: 'moneyEq',
+      value: { amount: 250, currency: 'USD' },
+    })
+  })
+
+  it('falls back to StringInput + console.warn when no renderer is registered', () => {
+    const moneySchema = defineFilterSchema({
+      fields: {
+        price: f.custom({
+          typeId: 'money_unique_b',
+          ops: [{ name: 'moneyEq', valueShape: 'single', label: 'is' }],
+        }),
+      },
+    })
+    const filter = useFilter({
+      schema: moneySchema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'price', op: 'moneyEq', value: 'fallback-text' },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    // The fallback IS the string text input.
+    expect(wrapper.find('input.dql-input--string').exists()).toBe(true)
+    expect(warnSpy).toHaveBeenCalled()
+    const message = warnSpy.mock.calls[0]![0] as string
+    expect(message).toContain('typeId="money_unique_b"')
+    expect(message).toContain('registerFieldRenderer')
+  })
+
+  it('warn is deduplicated to once per typeId', () => {
+    const moneySchema = defineFilterSchema({
+      fields: {
+        price: f.custom({
+          typeId: 'money_unique_c',
+          ops: [{ name: 'moneyEq', valueShape: 'single', label: 'is' }],
+        }),
+      },
+    })
+    const filter = useFilter({
+      schema: moneySchema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'price', op: 'moneyEq', value: 'a' },
+          { field: 'price', op: 'moneyEq', value: 'b' },
+          { field: 'price', op: 'moneyEq', value: 'c' },
+        ],
+      },
+    })
+    mount(FilterBuilder, { props: { filter } })
+    expect(warnSpy).toHaveBeenCalledTimes(1)
   })
 })
 

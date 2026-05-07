@@ -3,6 +3,7 @@ import { computed, defineComponent, h, provide, type PropType, type VNode } from
 import { filterInjectionKey } from './inject.ts'
 import { getFieldRenderer } from './registry.ts'
 import {
+  StringInput,
   defaultListRenderers,
   defaultPairRenderers,
   defaultRelativeRenderers,
@@ -22,6 +23,33 @@ const resolveRenderer = (typeId: string, shape: ValueShape) => {
   if (shape === 'list') return defaultListRenderers[typeId]
   if (shape === 'relative') return defaultRelativeRenderers[typeId]
   return defaultRenderers[typeId]
+}
+
+// In production builds (NODE_ENV === 'production') we suppress the
+// warning to keep consumer logs quiet; everywhere else we surface it
+// once per typeId so a missing renderer registration is loud during
+// development.
+const isProductionMode = (): boolean => {
+  try {
+    return (
+      typeof process !== 'undefined'
+      && (process as { env?: { NODE_ENV?: string } }).env?.NODE_ENV === 'production'
+    )
+  } catch {
+    return false
+  }
+}
+const warnedTypeIds = new Set<string>()
+const fallbackRenderer = (typeId: string) => {
+  if (!isProductionMode() && !warnedTypeIds.has(typeId)) {
+    warnedTypeIds.add(typeId)
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[dql-kit/vue] No renderer registered for typeId="${typeId}". `
+        + `Falling back to StringInput. Register one via registerFieldRenderer("${typeId}", YourComponent).`,
+    )
+  }
+  return StringInput
 }
 
 export const FilterBuilder = defineComponent({
@@ -71,8 +99,13 @@ export const FilterBuilder = defineComponent({
         fieldDef && fieldDef.typeId === 'array' && fieldDef.itemType
           ? fieldDef.itemType
           : fieldDef
-      const renderer =
-        rendererField && op ? resolveRenderer(rendererField.typeId, op.valueShape) : undefined
+      const renderer = (() => {
+        if (!rendererField || !op) return undefined
+        if (op.valueShape === 'none') return undefined
+        const resolved = resolveRenderer(rendererField.typeId, op.valueShape)
+        if (resolved) return resolved
+        return fallbackRenderer(rendererField.typeId)
+      })()
 
       const fieldSelect = h(
         'select',

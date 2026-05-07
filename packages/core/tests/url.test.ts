@@ -387,6 +387,34 @@ describe('fromUrl', () => {
     expect(result.ast.children).toHaveLength(0)
   })
 
+  test('round-trip lossless on a custom-typed field with a structured value', () => {
+    const moneySchema = defineFilterSchema({
+      fields: {
+        price: f.custom({
+          typeId: 'money',
+          ops: [{ name: 'moneyEq', valueShape: 'single', label: 'is' }],
+        }),
+      },
+    })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'price',
+          op: 'moneyEq',
+          value: { amount: 1299, currency: 'USD', tags: ['retail'] },
+        },
+      ],
+    }
+    const url = toUrl(ast)
+    const obj = JSON.parse(decodeURIComponent(url))
+    // The codec is value-shape agnostic: any JSON value is preserved.
+    expect(obj.n[0].v).toEqual({ amount: 1299, currency: 'USD', tags: ['retail'] })
+    const result = fromUrl(url, moneySchema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
   test('schema evolution: each dropped entry includes a path indexing into the decoded tree', () => {
     const compact = {
       c: 'and',

@@ -2,10 +2,17 @@ import { defineFilterSchema, f, fromUrl, toUrl } from '@dql-kit/core'
 import { createDrizzleTranslator } from '@dql-kit/drizzle'
 import { PGlite } from '@electric-sql/pglite'
 import { mount } from '@vue/test-utils'
+import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/pglite'
 import { integer, pgTable, serial, text } from 'drizzle-orm/pg-core'
-import { beforeAll, describe, expect, it } from 'vitest'
-import { FilterBuilder, useFilter } from '../src/index.ts'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { defineComponent, h } from 'vue'
+import {
+  FilterBuilder,
+  fieldRendererRegistry,
+  registerFieldRenderer,
+  useFilter,
+} from '../src/index.ts'
 
 const articles = pgTable('articles', {
   id: serial('id').primaryKey(),
@@ -181,6 +188,159 @@ describe('end-to-end: nested filter via actions → URL → pglite', () => {
     // Two groups: root + nested. Two combinator selects.
     expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(2)
     expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(true)
+  })
+})
+
+// Slice 12: custom type end-to-end. Declare a money typeId, register
+// its UI + SQL, drive a value through the composable, round-trip via
+// URL, and execute against a pglite fixture.
+const moneyTable = pgTable('money_e2e', {
+  id: serial('id').primaryKey(),
+  priceAmount: integer('price_amount').notNull(),
+  priceCurrency: text('price_currency').notNull(),
+})
+const moneySchema = defineFilterSchema({
+  fields: {
+    price: f.custom({
+      typeId: 'moneyE2E',
+      ops: [{ name: 'moneyEq', valueShape: 'single', label: 'is' }],
+    }),
+  },
+})
+
+const MoneyInput = defineComponent({
+  props: {
+    fieldKey: { type: String, required: true as const },
+    field: { type: Object, required: true as const },
+    op: { type: String, required: true as const },
+    value: { type: null as unknown as () => unknown, default: undefined },
+    onUpdate: {
+      type: Function as unknown as () => (v: unknown) => void,
+      required: true as const,
+    },
+  },
+  setup(props) {
+    return () =>
+      h('div', { class: 'dql-money', 'data-testid': 'money-control' }, [
+        h('input', {
+          type: 'number',
+          'data-testid': 'money-amount',
+          value:
+            typeof props.value === 'object' && props.value !== null
+              ? String((props.value as { amount?: number }).amount ?? '')
+              : '',
+          onInput: (e: Event) => {
+            const raw = (e.target as HTMLInputElement).value
+            const cur =
+              typeof props.value === 'object' && props.value !== null
+                ? (props.value as { currency?: string }).currency ?? 'USD'
+                : 'USD'
+            ;(props.onUpdate as (v: unknown) => void)({
+              amount: Number(raw),
+              currency: cur,
+            })
+          },
+        }),
+        h(
+          'select',
+          {
+            'data-testid': 'money-currency',
+            value:
+              typeof props.value === 'object' && props.value !== null
+                ? (props.value as { currency?: string }).currency ?? 'USD'
+                : 'USD',
+            onChange: (e: Event) => {
+              const cur = (e.target as HTMLSelectElement).value
+              const amt =
+                typeof props.value === 'object' && props.value !== null
+                  ? (props.value as { amount?: number }).amount ?? 0
+                  : 0
+              ;(props.onUpdate as (v: unknown) => void)({ amount: amt, currency: cur })
+            },
+          },
+          [
+            h('option', { value: 'USD' }, 'USD'),
+            h('option', { value: 'EUR' }, 'EUR'),
+            h('option', { value: 'JPY' }, 'JPY'),
+          ],
+        ),
+      ])
+  },
+})
+
+describe('end-to-end: f.custom + registerFieldRenderer + registerOp', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE money_e2e (
+        id SERIAL PRIMARY KEY,
+        price_amount INTEGER NOT NULL,
+        price_currency TEXT NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO money_e2e (price_amount, price_currency) VALUES
+        (100, 'USD'),
+        (100, 'EUR'),
+        (250, 'USD'),
+        (250, 'JPY');
+    `)
+    registerFieldRenderer('moneyE2E', MoneyInput)
+  })
+
+  afterAll(() => {
+    fieldRendererRegistry.clear()
+  })
+
+  it('drives the full extensibility path with one shared schema instance', async () => {
+    // 1. Mount FilterBuilder against the custom-type schema.
+    const filter = useFilter({
+      schema: moneySchema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'price', op: 'moneyEq', value: { amount: 0, currency: 'USD' } },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+
+    // 2. The registered renderer drives the value object through the UI.
+    expect(wrapper.find('[data-testid="money-control"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="money-amount"]').setValue('250')
+    await wrapper.find('[data-testid="money-currency"]').setValue('USD')
+    expect(filter.valid.value).toEqual({
+      combinator: 'and',
+      children: [
+        { field: 'price', op: 'moneyEq', value: { amount: 250, currency: 'USD' } },
+      ],
+    })
+
+    // 3. URL round-trip preserves the structured value verbatim.
+    const url = toUrl(filter.valid.value)
+    const decoded = fromUrl(url, moneySchema)
+    expect(decoded.dropped).toEqual([])
+    expect(decoded.ast).toEqual(filter.valid.value)
+
+    // 4. A custom Drizzle translator pulls both halves of the value into
+    // the right columns. The query executes against pglite and returns
+    // exactly the row matching both amount and currency.
+    const translator = createDrizzleTranslator({
+      schema: moneySchema,
+      columns: { price: moneyTable.priceAmount },
+    })
+    translator.registerOp('moneyEq', (col, value) => {
+      const v = value as { amount: number, currency: string }
+      return sql`${col} = ${v.amount} AND ${moneyTable.priceCurrency} = ${v.currency}`
+    })
+    const rows = await db.select().from(moneyTable).where(translator.toWhere(decoded.ast))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ priceAmount: 250, priceCurrency: 'USD' })
   })
 })
 

@@ -1172,3 +1172,92 @@ describe('createDrizzleTranslator — nested group parenthesisation', () => {
     expect(rows.every((r) => r.status === 'draft')).toBe(true)
   })
 })
+
+// Slice 12: custom typeId + custom op via registerOp. Models a "money"
+// type stored as two columns (amount + currency) and a `moneyEq` op that
+// matches both halves at once.
+const moneyArticles = pgTable('money_articles', {
+  id: serial('id').primaryKey(),
+  priceAmount: integer('price_amount').notNull(),
+  priceCurrency: text('price_currency').notNull(),
+})
+const moneySchema = defineFilterSchema({
+  fields: {
+    price: f.custom({
+      typeId: 'money',
+      ops: [
+        { name: 'moneyEq', valueShape: 'single', label: 'is' },
+      ],
+    }),
+  },
+})
+
+describe('createDrizzleTranslator — custom op via registerOp', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE money_articles (
+        id SERIAL PRIMARY KEY,
+        price_amount INTEGER NOT NULL,
+        price_currency TEXT NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO money_articles (price_amount, price_currency) VALUES
+        (1000, 'USD'),
+        (1000, 'EUR'),
+        (2500, 'USD'),
+        (2500, 'JPY');
+    `)
+  })
+
+  test('registerOp wires a custom op that pulls both halves out of the value object', async () => {
+    // Use the explicit `columns` form so a single AST field maps to a
+    // pair of physical columns. `moneyEq` reads `value.amount` against
+    // the explicitly-bound `priceAmount` column and `value.currency`
+    // against `priceCurrency`.
+    const t = createDrizzleTranslator({
+      schema: moneySchema,
+      columns: { price: moneyArticles.priceAmount },
+    })
+    t.registerOp('moneyEq', (col, value) => {
+      const v = value as { amount: number, currency: string }
+      // The mapped column is priceAmount; we cross-reference priceCurrency
+      // via the table directly. This is the typical pattern for
+      // composite-value custom ops.
+      return sql`${col} = ${v.amount} AND ${moneyArticles.priceCurrency} = ${v.currency}`
+    })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'price',
+          op: 'moneyEq',
+          value: { amount: 2500, currency: 'USD' },
+        },
+      ],
+    }
+    const rows = await db.select().from(moneyArticles).where(t.toWhere(ast))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ priceAmount: 2500, priceCurrency: 'USD' })
+  })
+
+  test('translator throws an actionable error if a custom op never gets registered', () => {
+    const t = createDrizzleTranslator({
+      schema: moneySchema,
+      columns: { price: moneyArticles.priceAmount },
+    })
+    // Note: no t.registerOp('moneyEq', ...) here.
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'price', op: 'moneyEq', value: { amount: 1, currency: 'USD' } },
+      ],
+    }
+    expect(() => t.toWhere(ast)).toThrow(/No SQL translator registered for op "moneyEq"/)
+  })
+})
