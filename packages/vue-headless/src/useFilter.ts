@@ -22,6 +22,7 @@ import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
 import type {
   FetcherMap,
+  FetcherMapFor,
   FilterActions,
   SearchSlot,
   SyncMode,
@@ -421,6 +422,11 @@ export const useFilter = <S extends FilterSchema>(
 
   return {
     schema: schemaRef,
+    // Re-expose the captured fetcher map. Cast to the schema-strict
+    // `FetcherMapFor<S>` shape — the runtime container is always the
+    // looser `FetcherMap` (any IdFetcher), but the surface type matches
+    // what the caller passed in via `opts.fetchers`.
+    fetchers: fetcherMap as FetcherMapFor<S>,
     draft,
     valid,
     errors,

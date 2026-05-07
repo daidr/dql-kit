@@ -87,6 +87,12 @@ export type FilterActions = {
 
 export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   schema: ComputedRef<S | undefined>
+  // The fetcher map captured at hook construction (or `{}` if none was
+  // passed). Exposed so consumers can derive a sibling `useFilter`
+  // sharing the same async backends — typical pattern: a popover-style
+  // editor that mirrors the page-level filter without re-declaring its
+  // fetchers. Treated as immutable for the lifetime of the instance.
+  fetchers: FetcherMapFor<S>
   draft: Ref<DraftAST>
   valid: ComputedRef<ValidAST>
   errors: ComputedRef<ValidationError[]>

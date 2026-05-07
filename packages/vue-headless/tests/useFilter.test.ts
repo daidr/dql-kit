@@ -417,4 +417,33 @@ describe('useFilter — async id integration', () => {
     // search.setQuery is still safe to call — it no-ops without a fetcher.
     expect(() => filter.search.value.setQuery('authorId', 'foo')).not.toThrow()
   })
+
+  it('exposes the captured fetchers map so a sibling useFilter can forward it', async () => {
+    // Regression: the popover-style edit filter pattern (a second
+    // useFilter sharing the same schema) needs access to the live
+    // filter's fetchers — otherwise its IdAutocompleteInput silently
+    // no-ops on every keystroke.
+    const search = vi.fn(async (q: string) => [{ id: 1, label: q }] as Item[])
+    const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
+    const live = useFilter({
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
+      sync: 'none',
+      debounceMs: 0,
+    })
+    expect(live.fetchers.authorId).toBeDefined()
+
+    // Forward into a derived filter — the inner filter sees the same
+    // search backend without the caller having to re-declare it.
+    const edit = useFilter({
+      schema: idSchema,
+      fetchers: live.fetchers,
+      sync: 'none',
+      debounceMs: 0,
+    })
+    edit.search.value.setQuery('authorId', 'hello')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(edit.search.value.results).toEqual([{ id: 1, label: 'hello' }])
+  })
 })
