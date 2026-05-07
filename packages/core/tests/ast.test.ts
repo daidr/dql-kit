@@ -573,6 +573,112 @@ describe('prune', () => {
     }
     expect(prune(draft, schema).children).toHaveLength(1)
   })
+
+  // Slice 9: deeper flattening invariants over multi-level fixtures.
+  test('flattens multi-level nesting: ((A)) → A in root', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        {
+          combinator: 'or',
+          children: [
+            {
+              combinator: 'and',
+              children: [{ field: 'title', op: 'eq', value: 'a' }],
+            },
+          ],
+        },
+      ],
+    }
+    const out = prune(draft, schema)
+    expect(out).toEqual({
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'a' }],
+    })
+  })
+
+  test('preserves a 2-child nested group inside root: (A or B) and C', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        {
+          combinator: 'or',
+          children: [
+            { field: 'title', op: 'eq', value: 'a' },
+            { field: 'title', op: 'eq', value: 'b' },
+          ],
+        },
+        { field: 'rating', op: 'eq', value: 5 },
+      ],
+    }
+    const out = prune(draft, schema)
+    expect(out).toEqual({
+      combinator: 'and',
+      children: [
+        {
+          combinator: 'or',
+          children: [
+            { field: 'title', op: 'eq', value: 'a' },
+            { field: 'title', op: 'eq', value: 'b' },
+          ],
+        },
+        { field: 'rating', op: 'eq', value: 5 },
+      ],
+    })
+  })
+
+  test('drops empty inner group sitting next to a sibling: (A and ()) → (A)', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        { field: 'title', op: 'eq', value: 'a' },
+        { combinator: 'or', children: [] },
+      ],
+    }
+    const out = prune(draft, schema)
+    expect(out.children).toHaveLength(1)
+    expect(out.children[0]).toEqual({ field: 'title', op: 'eq', value: 'a' })
+  })
+
+  test('keeps empty top-level root group exactly (idempotent on emptiness)', () => {
+    const draft: DraftAST = { combinator: 'or', children: [] }
+    expect(prune(draft, schema)).toEqual({ combinator: 'or', children: [] })
+  })
+
+  test('idempotent on a deep mixed fixture', () => {
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [
+        {
+          combinator: 'or',
+          children: [
+            { field: 'title', op: 'eq', value: 'x' },
+            {
+              combinator: 'and',
+              children: [
+                { field: 'rating', op: 'gt', value: 3 },
+                { field: 'rating', op: 'lt', value: 9 },
+              ],
+            },
+          ],
+        },
+        // An incomplete sibling that prune will drop:
+        { field: null, op: null },
+        // An empty sub-group that prune will drop:
+        { combinator: 'or', children: [] },
+        // A single-child nested group that will hoist:
+        {
+          combinator: 'or',
+          children: [{ field: 'status', op: 'eq', value: 'draft' }],
+        },
+      ],
+    }
+    const once = prune(draft, schema)
+    const twice = prune(once as unknown as DraftAST, schema)
+    expect(twice).toEqual(once)
+    // Sanity: the hoisted inner became a leaf at root level
+    expect(once.children).toContainEqual({ field: 'status', op: 'eq', value: 'draft' })
+  })
 })
 
 describe('validate', () => {

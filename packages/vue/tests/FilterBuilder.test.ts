@@ -1034,3 +1034,137 @@ describe('FilterBuilder — array<U> renderer dispatch', () => {
     expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(false)
   })
 })
+
+describe('FilterBuilder — nested groups', () => {
+  it('renders the root group with depth=0 and no remove-group button', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const root = wrapper.find('[data-testid="group"]')
+    expect(root.exists()).toBe(true)
+    expect(root.attributes('data-depth')).toBe('0')
+    expect(root.classes()).toContain('dql-group--root')
+    // The root must NOT have a remove-group button (top-level is exempt
+    // per DESIGN.md Q10).
+    expect(wrapper.find('[data-testid="remove-group"]').exists()).toBe(false)
+  })
+
+  it('addGroup creates a nested group with depth=1 and a per-group combinator select', async () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="add-group"]').trigger('click')
+    const nested = wrapper.find('[data-testid="group-nested"]')
+    expect(nested.exists()).toBe(true)
+    expect(nested.attributes('data-depth')).toBe('1')
+    expect(nested.classes()).toContain('dql-group--nested')
+    // Each group has its own combinator select (root + nested = 2).
+    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(2)
+  })
+
+  it('flipping the nested combinator updates only the nested group', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          {
+            combinator: 'and',
+            children: [{ field: 'title', op: 'eq', value: 'a' }],
+          },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const selects = wrapper.findAll('[data-testid="combinator-select"]')
+    expect(selects).toHaveLength(2)
+    await selects[1]!.setValue('or')
+    expect(filter.draft.value.combinator).toBe('and')
+    const innerGroup = filter.draft.value.children[0] as { combinator: string }
+    expect(innerGroup.combinator).toBe('or')
+  })
+
+  it('remove-group button removes the entire nested group and any of its conditions', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'title', op: 'eq', value: 'keep-me' },
+          {
+            combinator: 'or',
+            children: [
+              { field: 'rating', op: 'gt', value: 1 },
+              { field: 'rating', op: 'lt', value: 9 },
+            ],
+          },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="remove-group"]').trigger('click')
+    expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(false)
+    expect(filter.valid.value.children).toEqual([
+      { field: 'title', op: 'eq', value: 'keep-me' },
+    ])
+  })
+
+  it('action chain: addGroup → addCondition → updateNode produces a (A or B) and C valid AST', async () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'C' }],
+      },
+    })
+    // Insert an OR sub-group at root and seed it with two conditions.
+    filter.actions.addGroup([], 'or')
+    filter.actions.addCondition([1], { field: 'title', op: 'eq', value: 'A' })
+    filter.actions.addCondition([1], { field: 'title', op: 'eq', value: 'B' })
+    expect(filter.valid.value).toEqual({
+      combinator: 'and',
+      children: [
+        { field: 'title', op: 'eq', value: 'C' },
+        {
+          combinator: 'or',
+          children: [
+            { field: 'title', op: 'eq', value: 'A' },
+            { field: 'title', op: 'eq', value: 'B' },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('a three-level fixture exposes data-depth=2 on the deepest group', () => {
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          {
+            combinator: 'or',
+            children: [
+              { field: 'title', op: 'eq', value: 'a' },
+              {
+                combinator: 'and',
+                children: [
+                  { field: 'rating', op: 'gt', value: 1 },
+                  { field: 'rating', op: 'lt', value: 9 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const depths = wrapper
+      .findAll('[data-depth]')
+      .map((el) => el.attributes('data-depth'))
+    expect(depths).toEqual(['0', '1', '2'])
+  })
+})

@@ -376,6 +376,50 @@ describe('fromUrl', () => {
     expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
   })
 
+  test('round-trip lossless on (A and B) or C nested shape', () => {
+    const ast: ValidAST = {
+      combinator: 'or',
+      children: [
+        {
+          combinator: 'and',
+          children: [
+            { field: 'title', op: 'eq', value: 'hello' },
+            { field: 'rating', op: 'gt', value: 3 },
+          ],
+        },
+        { field: 'status', op: 'eq', value: 'published' },
+      ],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
+  test('round-trip lossless on three-level mixed nesting', () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'rating', op: 'gte', value: 1 },
+        {
+          combinator: 'or',
+          children: [
+            { field: 'status', op: 'in', value: ['draft', 'published'] },
+            {
+              combinator: 'and',
+              children: [
+                { field: 'title', op: 'contains', value: 'foo' },
+                { field: 'isActive', op: 'eq', value: true },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const result = fromUrl(toUrl(ast), schema)
+    expect(result.ast).toEqual(ast)
+    expect(result.dropped).toEqual([])
+  })
+
   test('round-trip lossless on isEmpty (none shape)', () => {
     const ast: ValidAST = {
       combinator: 'and',

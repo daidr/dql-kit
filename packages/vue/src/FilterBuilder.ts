@@ -139,6 +139,9 @@ export const FilterBuilder = defineComponent({
     }
 
     const renderGroup = (group: DraftGroup, path: number[]): VNode => {
+      const isRoot = path.length === 0
+      const depth = path.length
+
       const combinatorSelect = h(
         'select',
         {
@@ -154,6 +157,27 @@ export const FilterBuilder = defineComponent({
           h('option', { value: 'and' }, 'AND'),
           h('option', { value: 'or' }, 'OR'),
         ],
+      )
+
+      // Non-root groups can be removed entirely; the root group is exempt
+      // (per DESIGN.md Q10: top-level group always persists, even empty).
+      const removeGroupBtn = isRoot
+        ? null
+        : h(
+            'button',
+            {
+              type: 'button',
+              class: 'dql-remove dql-remove-group',
+              'data-testid': 'remove-group',
+              onClick: () => props.filter.actions.removeNode(path),
+            },
+            '×',
+          )
+
+      const header = h(
+        'div',
+        { class: 'dql-group-header' },
+        [combinatorSelect, removeGroupBtn].filter(Boolean) as VNode[],
       )
 
       const children = group.children.map((child: DraftNode, i: number) => {
@@ -187,8 +211,16 @@ export const FilterBuilder = defineComponent({
 
       return h(
         'div',
-        { class: 'dql-group', 'data-testid': 'group' },
-        [combinatorSelect, ...children, addCondBtn, addGroupBtn],
+        {
+          class: [
+            'dql-group',
+            isRoot ? 'dql-group--root' : 'dql-group--nested',
+            `dql-group--depth-${depth}`,
+          ],
+          'data-testid': isRoot ? 'group' : 'group-nested',
+          'data-depth': String(depth),
+        },
+        [header, ...children, addCondBtn, addGroupBtn],
       )
     }
 

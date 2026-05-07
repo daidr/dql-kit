@@ -1030,3 +1030,145 @@ describe('createDrizzleTranslator — array<number> coverage', () => {
     expect(rows[0]?.scores).toEqual([2, 4, 6])
   })
 })
+
+// Slice 9: nested AND/OR parenthesisation. Builds (A or B) and C-style
+// shapes against fixture rows and asserts the matched set matches the
+// boolean tree, not a flattened any/all.
+const nestedTable = pgTable('nested_articles', {
+  id: serial('id').primaryKey(),
+  title: text('title').notNull(),
+  rating: integer('rating').notNull(),
+  status: text('status').notNull(),
+})
+const nestedSchema = defineFilterSchema({
+  fields: {
+    title: f.string(),
+    rating: f.number(),
+    status: f.enum(['draft', 'published', 'archived'] as const),
+  },
+})
+
+describe('createDrizzleTranslator — nested group parenthesisation', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE nested_articles (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        rating INTEGER NOT NULL,
+        status TEXT NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO nested_articles (title, rating, status) VALUES
+        ('alpha',   2, 'draft'),
+        ('alpha',   8, 'published'),
+        ('beta',    3, 'draft'),
+        ('beta',    9, 'archived'),
+        ('gamma',   1, 'archived'),
+        ('gamma',   7, 'published');
+    `)
+  })
+
+  test('(rating > 5 OR title = "alpha") AND status = "draft"', async () => {
+    // Without proper parenthesisation, the predicate would degenerate to
+    // rating > 5 OR (title = 'alpha' AND status = 'draft') and pull in
+    // the published-rating-7 row. The translator must emit parens so the
+    // AST tree shape is preserved.
+    const t = createDrizzleTranslator({ schema: nestedSchema, table: nestedTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        {
+          combinator: 'or',
+          children: [
+            { field: 'rating', op: 'gt', value: 5 },
+            { field: 'title', op: 'eq', value: 'alpha' },
+          ],
+        },
+        { field: 'status', op: 'eq', value: 'draft' },
+      ],
+    }
+    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    // Only ('alpha', 2, 'draft') satisfies the tree: title=alpha AND status=draft.
+    // (No row with rating>5 has status=draft.)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ title: 'alpha', rating: 2, status: 'draft' })
+  })
+
+  test('(A and B) or (C and D) — nested OR-of-ANDs', async () => {
+    const t = createDrizzleTranslator({ schema: nestedSchema, table: nestedTable })
+    const ast: ValidAST = {
+      combinator: 'or',
+      children: [
+        {
+          combinator: 'and',
+          children: [
+            { field: 'title', op: 'eq', value: 'alpha' },
+            { field: 'rating', op: 'gt', value: 5 },
+          ],
+        },
+        {
+          combinator: 'and',
+          children: [
+            { field: 'status', op: 'eq', value: 'archived' },
+            { field: 'rating', op: 'lt', value: 5 },
+          ],
+        },
+      ],
+    }
+    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    // Matches:
+    //   alpha + 8 + published (alpha AND rating>5)
+    //   gamma + 1 + archived  (status=archived AND rating<5)
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.title).sort()).toEqual(['alpha', 'gamma'])
+  })
+
+  test('three-level deep nesting still respects boolean tree', async () => {
+    const t = createDrizzleTranslator({ schema: nestedSchema, table: nestedTable })
+    // status='draft' AND (title='alpha' OR (rating > 2 AND title='beta'))
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'status', op: 'eq', value: 'draft' },
+        {
+          combinator: 'or',
+          children: [
+            { field: 'title', op: 'eq', value: 'alpha' },
+            {
+              combinator: 'and',
+              children: [
+                { field: 'rating', op: 'gt', value: 2 },
+                { field: 'title', op: 'eq', value: 'beta' },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    // Drafts are: ('alpha', 2), ('beta', 3). Both match.
+    expect(rows.map((r) => r.title).sort()).toEqual(['alpha', 'beta'])
+  })
+
+  test('empty nested group inside root is treated as the root predicate alone', async () => {
+    // The translator only sees Valid AST, but covering the boundary
+    // where prune left a tautology fragment behind is worth a row check.
+    const t = createDrizzleTranslator({ schema: nestedSchema, table: nestedTable })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        { field: 'status', op: 'eq', value: 'draft' },
+        { combinator: 'or', children: [] }, // empty inner group -> sql\`true\`
+      ],
+    }
+    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.status === 'draft')).toBe(true)
+  })
+})
