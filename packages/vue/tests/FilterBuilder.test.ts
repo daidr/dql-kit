@@ -754,26 +754,32 @@ describe('FilterBuilder — id autocomplete renderer', () => {
     vi.useRealTimers()
   })
 
+  // Schema is a plain constant; fetchers are passed via useFilter's
+  // `fetchers` map (post-refactor: schema no longer carries async funcs).
+  const _idSchema = defineFilterSchema({
+    fields: {
+      authorId: f.id(),
+    },
+  })
+
   const idAuthorSchema = (
     search: (q: string, signal: AbortSignal) => Promise<Item[]> | Item[],
     resolve: (
       ids: (string | number)[],
       signal: AbortSignal,
     ) => Promise<Item[]> | Item[],
-  ) =>
-    defineFilterSchema({
-      fields: {
-        authorId: f.id<number>({
-          fetcher: {
-            search: search as (q: string, signal: AbortSignal) => Promise<Item[]>,
-            resolve: resolve as (
-              ids: (string | number)[],
-              signal: AbortSignal,
-            ) => Promise<Item[]>,
-          },
-        }),
+  ) => ({
+    schema: _idSchema,
+    fetchers: {
+      authorId: {
+        search: search as (q: string, signal: AbortSignal) => Promise<Item[]>,
+        resolve: resolve as (
+          ids: (string | number)[],
+          signal: AbortSignal,
+        ) => Promise<Item[]>,
       },
-    })
+    },
+  })
 
   it('typing in the search box drives setQuery; results render after debounce', async () => {
     const search = vi.fn(async (q: string): Promise<Item[]> => [
@@ -785,7 +791,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         ids.map((id) => ({ id, label: `Author ${String(id)}` })),
     )
     const filter = useFilter({
-      schema: idAuthorSchema(search, resolve),
+      ...idAuthorSchema(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -814,7 +820,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         ids.map((id) => ({ id, label: `Author ${String(id)}` })),
     )
     const filter = useFilter({
-      schema: idAuthorSchema(search, resolve),
+      ...idAuthorSchema(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -848,7 +854,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
     const search = vi.fn(async () => [] as Item[])
     const resolve = vi.fn(() => resolveP)
     const filter = useFilter({
-      schema: idAuthorSchema(search, resolve),
+      ...idAuthorSchema(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -870,7 +876,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         ids.map((id) => ({ id, label: `Author ${String(id)}` })),
     )
     const filter = useFilter({
-      schema: idAuthorSchema(search, resolve),
+      ...idAuthorSchema(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -891,7 +897,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         ids.map((id) => ({ id, label: `Author ${String(id)}` })),
     )
     const filter = useFilter({
-      schema: idAuthorSchema(search, resolve),
+      ...idAuthorSchema(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -922,7 +928,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         ids.map((id) => ({ id, label: `Author ${String(id)}` })),
     )
     const filter = useFilter({
-      schema: idAuthorSchema(search, resolve),
+      ...idAuthorSchema(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',

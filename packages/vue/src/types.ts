@@ -3,6 +3,7 @@ import type {
   DroppedNode,
   FieldDef,
   FilterSchema,
+  IdFetcher,
   Item,
   ValidAST,
   ValidationError,
@@ -11,8 +12,29 @@ import type { Component, ComputedRef, Ref } from 'vue'
 
 export type SyncMode = 'url' | 'none'
 
+// Map of fieldKey → IdFetcher. Provided per-useFilter (not on the schema)
+// so the same schema constant can be shared by frontend and backend; the
+// backend has no concept of fetchers.
+//
+// Value type uses `IdFetcher<any>` deliberately: each entry may have a
+// concrete ID type (e.g. `IdFetcher<number>` for an integer FK), and TS
+// would otherwise reject narrower fetchers being assigned to a wider
+// `IdFetcher<string | number>` (resolve's `ids: ID[]` is contravariant).
+// `any` here only relaxes the structural fit; consumers can declare
+// stricter typed maps in their own packages (e.g. story-verse's
+// `ArticleFetcherMap = { categoryId: IdFetcher<number> }`).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type FetcherMap = Record<string, IdFetcher<any>>
+
 export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
   schema: S | Ref<S | undefined>
+  /**
+   * Map of `f.id` field keys → async fetchers for label search/resolve.
+   * Only required for fields whose typeId is 'id'; missing entries make
+   * those fields silently skip async work (id values still flow through
+   * the AST, only labels resolve to '#<id>' fallback in the UI).
+   */
+  fetchers?: FetcherMap
   initial?: ValidAST
   sync?: SyncMode
   queryKey?: string

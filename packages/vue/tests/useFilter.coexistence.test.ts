@@ -293,24 +293,26 @@ describe('useFilter — multi-filter async fetcher isolation', () => {
 
     const idSchemaA = defineFilterSchema({
       fields: {
-        authorId: f.id({
-          fetcher: {
-            search: sA as (q: string, signal: AbortSignal) => Promise<Item[]>,
-            resolve: rA as (ids: (string | number)[], signal: AbortSignal) => Promise<Item[]>,
-          },
-        }),
+        authorId: f.id(),
       },
     })
     const idSchemaB = defineFilterSchema({
       fields: {
-        tagId: f.id({
-          fetcher: {
-            search: sB as (q: string, signal: AbortSignal) => Promise<Item[]>,
-            resolve: rB as (ids: (string | number)[], signal: AbortSignal) => Promise<Item[]>,
-          },
-        }),
+        tagId: f.id(),
       },
     })
+    const fetchersA = {
+      authorId: {
+        search: sA as (q: string, signal: AbortSignal) => Promise<Item[]>,
+        resolve: rA as (ids: (string | number)[], signal: AbortSignal) => Promise<Item[]>,
+      },
+    }
+    const fetchersB = {
+      tagId: {
+        search: sB as (q: string, signal: AbortSignal) => Promise<Item[]>,
+        resolve: rB as (ids: (string | number)[], signal: AbortSignal) => Promise<Item[]>,
+      },
+    }
 
     const router = createRouter({
       history: createMemoryHistory(),
@@ -325,12 +327,14 @@ describe('useFilter — multi-filter async fetcher isolation', () => {
       setup() {
         fA = useFilter({
           schema: idSchemaA,
+          fetchers: fetchersA,
           sync: 'none',
           queryKey: 'a',
           debounceMs: 0,
         }) as UseFilterReturn<typeof idSchemaA>
         fB = useFilter({
           schema: idSchemaB,
+          fetchers: fetchersB,
           sync: 'none',
           queryKey: 'b',
           debounceMs: 0,

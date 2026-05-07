@@ -1,14 +1,10 @@
 import { builtinOps } from './ops.ts'
-import type { FieldDef, IdFetcher, Label, OpDef } from './types.ts'
+import type { FieldDef, Label, OpDef } from './types.ts'
 
 type CommonOpts = { label?: Label, group?: string }
 
 type EnumOpts<V extends string | number> = CommonOpts & {
   valueLabels?: Partial<Record<V, Label>>
-}
-
-type IdOpts<ID extends string | number> = CommonOpts & {
-  fetcher: IdFetcher<ID>
 }
 
 type CustomOpts = CommonOpts & {
@@ -66,14 +62,8 @@ export const f = {
   datetime(opts: CommonOpts = {}): FieldDef {
     return augment(make({ typeId: 'datetime', ops: opSets.datetime, ...opts }))
   },
-  id<ID extends string | number = string | number>(opts: IdOpts<ID>): FieldDef {
-    return augment(make({
-      typeId: 'id',
-      ops: opSets.id,
-      fetcher: opts.fetcher as unknown as IdFetcher,
-      ...(opts.label !== undefined && { label: opts.label }),
-      ...(opts.group !== undefined && { group: opts.group }),
-    }))
+  id(opts: CommonOpts = {}): FieldDef {
+    return augment(make({ typeId: 'id', ops: opSets.id, ...opts }))
   },
   array(itemType: FieldDef, opts: CommonOpts = {}): FieldDef {
     return augment(make({ typeId: 'array', ops: opSets.array, itemType, ...opts }))

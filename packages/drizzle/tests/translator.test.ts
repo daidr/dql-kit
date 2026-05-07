@@ -810,13 +810,12 @@ const articleAuthors = pgTable('article_authors', {
   id: serial('id').primaryKey(),
   authorId: integer('author_id').notNull(),
 })
-const noopFetcher = {
-  search: async () => [],
-  resolve: async () => [],
-}
+// Post-refactor: schema doesn't carry fetchers; backend translator
+// only consumes the typeId/op/value triple, so fetchers are irrelevant
+// here.
 const idSchema = defineFilterSchema({
   fields: {
-    authorId: f.id<number>({ fetcher: noopFetcher }),
+    authorId: f.id(),
   },
 })
 

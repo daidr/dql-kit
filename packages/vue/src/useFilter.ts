@@ -12,6 +12,7 @@ import {
   type DraftNode,
   type DroppedNode,
   type FilterSchema,
+  type IdFetcher,
   type ValidAST,
   type ValidNode,
   type ValidationError,
@@ -20,6 +21,7 @@ import { computed, isRef, ref, toRaw, watch, type ComputedRef, type Ref } from '
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
 import type {
+  FetcherMap,
   FilterActions,
   SearchSlot,
   SyncMode,
@@ -91,6 +93,12 @@ export const useFilter = <S extends FilterSchema>(
   const persistMode = opts.persistDraft ?? 'none'
   const storageKey = PERSIST_KEY_PREFIX + queryKey
 
+  // FetcherMap is captured at hook-call time. Treating it as immutable
+  // for the lifetime of a useFilter instance keeps the orchestrator
+  // simple — if callers want hot-swap fetchers they can re-mount.
+  const fetcherMap: FetcherMap = opts.fetchers ?? {}
+  const fetcherFor = (fieldKey: string): IdFetcher | undefined => fetcherMap[fieldKey]
+
   const schemaRef: ComputedRef<S | undefined> = computed(() =>
     isRef(opts.schema)
       ? (opts.schema.value as S | undefined)
@@ -154,11 +162,13 @@ export const useFilter = <S extends FilterSchema>(
     const s = schemaRef.value
     if (!s) return
     const fieldDef = s.fields[fieldKey]
-    if (!fieldDef || fieldDef.typeId !== 'id' || !fieldDef.fetcher) return
+    if (!fieldDef || fieldDef.typeId !== 'id') return
+    const fetcher = fetcherFor(fieldKey)
+    if (!fetcher) return
     orchestrator.setQuery(
       fieldKey,
       query,
-      fieldDef.fetcher.search,
+      fetcher.search,
       debounceMs,
       (patch) => {
         // Spread preserves the slot's `setQuery` member across updates.
@@ -297,9 +307,10 @@ export const useFilter = <S extends FilterSchema>(
     const map = collectIdsByField(v, s)
     for (const [fieldKey, ids] of map) {
       const fieldDef = s.fields[fieldKey]
-      if (fieldDef && fieldDef.typeId === 'id' && fieldDef.fetcher) {
-        orchestrator.resolveBatch(fieldKey, ids, fieldDef.fetcher.resolve)
-      }
+      if (!fieldDef || fieldDef.typeId !== 'id') continue
+      const fetcher = fetcherFor(fieldKey)
+      if (!fetcher) continue
+      orchestrator.resolveBatch(fieldKey, ids, fetcher.resolve)
     }
   }
 

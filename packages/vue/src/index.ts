@@ -29,6 +29,7 @@ export {
 export { filterInjectionKey } from './inject.ts'
 export { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
 export type {
+  FetcherMap,
   FieldRendererProps,
   FieldRendererRegistry,
   FilterActions,

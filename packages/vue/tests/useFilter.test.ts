@@ -186,33 +186,36 @@ describe('useFilter — async id integration', () => {
   const authorRows = (ids: (string | number)[]): Item[] =>
     ids.map((id) => ({ id, label: `Author ${String(id)}` }))
 
-  const idSchema = (
+  // Schema is a plain constant — fetcher is now provided per-useFilter,
+  // not on the schema (post-refactor).
+  const idSchema = defineFilterSchema({
+    fields: {
+      authorId: f.id(),
+    },
+  })
+
+  const fetchers = (
     search: (q: string, signal: AbortSignal) => Promise<Item[]> | Item[],
     resolve: (
       ids: (string | number)[],
       signal: AbortSignal,
     ) => Promise<Item[]> | Item[],
-  ) =>
-    defineFilterSchema({
-      fields: {
-        authorId: f.id({
-          fetcher: {
-            search: search as (q: string, signal: AbortSignal) => Promise<Item[]>,
-            resolve: resolve as (
-              ids: (string | number)[],
-              signal: AbortSignal,
-            ) => Promise<Item[]>,
-          },
-        }),
-      },
-    })
+  ) => ({
+    authorId: {
+      search: search as (q: string, signal: AbortSignal) => Promise<Item[]>,
+      resolve: resolve as (
+        ids: (string | number)[],
+        signal: AbortSignal,
+      ) => Promise<Item[]>,
+    },
+  })
 
   it('eager resolve fires once per field on mount when initial AST contains id values', async () => {
     const search = vi.fn(async () => [] as Item[])
     const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
-    const idS = idSchema(search, resolve)
     useFilter({
-      schema: idS,
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -227,9 +230,9 @@ describe('useFilter — async id integration', () => {
   it('labelOf transitions pending → resolved reactively after fetcher settles', async () => {
     const search = vi.fn(async () => [] as Item[])
     const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
-    const idS = idSchema(search, resolve)
     const filter = useFilter({
-      schema: idS,
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -247,7 +250,11 @@ describe('useFilter — async id integration', () => {
   it('search.setQuery debounces (250ms default) and emits a single fetcher call with the latest query', async () => {
     const search = vi.fn(async (q: string) => authorRows([q]))
     const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
-    const filter = useFilter({ schema: idSchema(search, resolve), sync: 'none' })
+    const filter = useFilter({
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
+      sync: 'none',
+    })
 
     filter.search.value.setQuery('authorId', 'a')
     filter.search.value.setQuery('authorId', 'ab')
@@ -264,7 +271,8 @@ describe('useFilter — async id integration', () => {
     const search = vi.fn(async (q: string) => authorRows([q]))
     const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
     const filter = useFilter({
-      schema: idSchema(search, resolve),
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
       sync: 'none',
       debounceMs: 0,
     })
@@ -277,7 +285,8 @@ describe('useFilter — async id integration', () => {
     const search = vi.fn(async () => [] as Item[])
     const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
     const filter = useFilter({
-      schema: idSchema(search, resolve),
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -294,7 +303,11 @@ describe('useFilter — async id integration', () => {
   it('newly added id values trigger an additional resolve call', async () => {
     const search = vi.fn(async () => [] as Item[])
     const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
-    const filter = useFilter({ schema: idSchema(search, resolve), sync: 'none' })
+    const filter = useFilter({
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
+      sync: 'none',
+    })
     filter.actions.addCondition([], { field: 'authorId', op: 'eq', value: 7 })
     await nextTick()
     await vi.advanceTimersByTimeAsync(0)
@@ -315,7 +328,8 @@ describe('useFilter — async id integration', () => {
     })
     const resolve = vi.fn(async (ids: (string | number)[]) => authorRows(ids))
     const filter = useFilter({
-      schema: idSchema(search, resolve),
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
       sync: 'none',
       debounceMs: 0,
     })
@@ -330,7 +344,8 @@ describe('useFilter — async id integration', () => {
     const search = vi.fn(async () => [] as Item[])
     const resolve = (ids: (string | number)[]): Item[] => authorRows(ids)
     const filter = useFilter({
-      schema: idSchema(search, resolve),
+      schema: idSchema,
+      fetchers: fetchers(search, resolve),
       sync: 'none',
       initial: {
         combinator: 'and',
@@ -342,5 +357,22 @@ describe('useFilter — async id integration', () => {
       status: 'resolved',
       label: 'Author 1',
     })
+  })
+
+  it('id field with no fetcher entry: AST flows through, label resolves to error/pending fallback', async () => {
+    const filter = useFilter({
+      schema: idSchema,
+      // No fetchers map at all
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'authorId', op: 'eq', value: 99 }],
+      },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    // No fetcher → orchestrator never primed; labelOf falls back to pending.
+    expect(filter.labelOf('authorId', 99)).toEqual({ status: 'pending' })
+    // search.setQuery is still safe to call — it no-ops without a fetcher.
+    expect(() => filter.search.value.setQuery('authorId', 'foo')).not.toThrow()
   })
 })

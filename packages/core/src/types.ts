@@ -39,7 +39,6 @@ export type FieldDef = {
   label?: Label
   group?: string
   ops: OpDef[]
-  fetcher?: IdFetcher
   enumValues?: ReadonlyArray<{ value: string | number, label?: Label }>
   itemType?: FieldDef
 }
