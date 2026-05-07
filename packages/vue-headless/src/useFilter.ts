@@ -216,10 +216,20 @@ export const useFilter = <S extends FilterSchema>(
         const target =
           parentPath.length === 0 ? d : (navigate(d, parentPath) as DraftGroup | null)
         if (!target || !isGroup(target)) return
-        const next: DraftCondition = {
-          field: condition?.field ?? null,
-          op: condition?.op ?? null,
+        const s = schemaRef.value
+
+        let field: string | null = condition?.field ?? null
+        let op: string | null = condition?.op ?? null
+        // If caller gave a field but no op, auto-pick the field's first
+        // op — matches the field-swap auto-fill in updateNode so callers
+        // who go either way (addCondition with field, or addCondition()
+        // followed by updateNode field) land on the same state.
+        if (field && op === null && s) {
+          const fieldDef = s.fields[field]
+          op = fieldDef?.ops[0]?.name ?? null
         }
+
+        const next: DraftCondition = { field, op }
         if (condition && 'value' in condition) {
           next.value = condition.value
         }
@@ -239,12 +249,33 @@ export const useFilter = <S extends FilterSchema>(
         const node = navigate(d, path)
         if (!node || isGroup(node)) return
         const cond = node as DraftCondition
+        const s = schemaRef.value
+
+        // Field swap: reset op + value, then auto-pick the first op from
+        // the new field's op list so the user lands in a valid state with
+        // one click. Falls back to null if the schema isn't available or
+        // the field is unknown — the existing prune / validate guards
+        // still catch incomplete drafts.
         if ('field' in partial && partial.field !== undefined && partial.field !== cond.field) {
           cond.field = partial.field
-          cond.op = null
+          const fieldDef = s?.fields[partial.field]
+          cond.op = fieldDef?.ops[0]?.name ?? null
           delete cond.value
         }
-        if ('op' in partial && partial.op !== undefined) {
+        // Op swap: drop value when the new op's valueShape differs from
+        // the previous one (e.g. `between` → `eq` invalidates the old
+        // [a, b] tuple). Preserve value when shape stays the same
+        // (eq ↔ neq, contains ↔ notContains, ...) so single-op tweaks
+        // don't lose the user's input.
+        if ('op' in partial && partial.op !== undefined && partial.op !== cond.op) {
+          const fieldDef = cond.field && s ? s.fields[cond.field] : undefined
+          const oldOp = fieldDef?.ops.find((o) => o.name === cond.op)
+          const newOp = fieldDef?.ops.find((o) => o.name === partial.op)
+          cond.op = partial.op
+          if (oldOp && newOp && oldOp.valueShape !== newOp.valueShape) {
+            delete cond.value
+          }
+        } else if ('op' in partial && partial.op !== undefined) {
           cond.op = partial.op
         }
         if ('value' in partial) {

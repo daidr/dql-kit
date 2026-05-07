@@ -50,9 +50,9 @@ describe('useFilter — actions', () => {
     })
   })
 
-  it('updateNode with field change resets op and value', () => {
+  it('updateNode with field change auto-fills first op of the new field and clears value', () => {
     const filter = useFilter({ schema, sync: 'none' })
-    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'hello' })
+    filter.actions.addCondition([], { field: 'title', op: 'contains', value: 'hello' })
     filter.actions.updateNode([0], { field: 'rating' })
     const cond = filter.draft.value.children[0] as {
       field: string | null
@@ -60,8 +60,49 @@ describe('useFilter — actions', () => {
       value?: unknown
     }
     expect(cond.field).toBe('rating')
-    expect(cond.op).toBeNull()
+    // First op of the number field set is 'eq' (see opSets.number in builder.ts).
+    expect(cond.op).toBe('eq')
     expect(cond.value).toBeUndefined()
+  })
+
+  it('updateNode op swap drops value when valueShape changes', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    // between is a 'pair' shape; eq is 'single'.
+    filter.actions.addCondition([], { field: 'rating', op: 'between', value: [1, 5] })
+    filter.actions.updateNode([0], { op: 'eq' })
+    const cond = filter.draft.value.children[0] as {
+      field: string | null
+      op: string | null
+      value?: unknown
+    }
+    expect(cond.op).toBe('eq')
+    // valueShape pair → single ⇒ stale [1, 5] dropped.
+    expect(cond.value).toBeUndefined()
+  })
+
+  it('updateNode op swap preserves value when valueShape stays the same', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    // contains and notContains both have valueShape 'single'.
+    filter.actions.addCondition([], { field: 'title', op: 'contains', value: 'hello' })
+    filter.actions.updateNode([0], { op: 'notContains' })
+    const cond = filter.draft.value.children[0] as {
+      field: string | null
+      op: string | null
+      value?: unknown
+    }
+    expect(cond.op).toBe('notContains')
+    expect(cond.value).toBe('hello')
+  })
+
+  it('addCondition with field but no op auto-fills the first op', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addCondition([], { field: 'rating' })
+    const cond = filter.draft.value.children[0] as {
+      field: string | null
+      op: string | null
+    }
+    expect(cond.field).toBe('rating')
+    expect(cond.op).toBe('eq')
   })
 
   it('removeNode removes the condition at path', () => {
@@ -139,11 +180,12 @@ describe('useFilter — errors surface', () => {
     // Start with an incomplete condition.
     filter.actions.addCondition([])
     expect(filter.errors.value[0]?.code).toBe('incomplete')
-    // Pick a field — still incomplete (op missing).
+    // Pick a field — op auto-fills to first op of the field, so the
+    // remaining gap is the value.
     filter.actions.updateNode([0], { field: 'title' })
-    expect(filter.errors.value[0]).toMatchObject({ code: 'incomplete', missing: 'op' })
-    // Pick an op — value still missing.
-    filter.actions.updateNode([0], { op: 'eq' })
+    expect(filter.errors.value[0]).toMatchObject({ code: 'incomplete', missing: 'value' })
+    // Switching to a non-default op of the same field also leaves value missing.
+    filter.actions.updateNode([0], { op: 'contains' })
     expect(filter.errors.value[0]).toMatchObject({ code: 'incomplete', missing: 'value' })
     // Type-mismatched value — code flips to value_type_mismatch.
     filter.actions.updateNode([0], { field: 'rating', op: 'eq', value: 'oops' })
