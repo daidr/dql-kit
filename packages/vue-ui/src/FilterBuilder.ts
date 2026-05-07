@@ -10,14 +10,16 @@ import {
   type ValueShape,
 } from '@dql-kit/core'
 import {
+  dqlKitInjectionKey,
   filterInjectionKey,
-  getFieldRenderer,
+  type DqlKitState,
   type UseFilterReturn,
 } from '@dql-kit/vue-headless'
 import {
   computed,
   defineComponent,
   h,
+  inject,
   onBeforeUnmount,
   onMounted,
   provide,
@@ -27,10 +29,7 @@ import {
 } from 'vue'
 import {
   StringInput,
-  defaultListRenderers,
-  defaultPairRenderers,
-  defaultRelativeRenderers,
-  defaultRenderers,
+  resolveRenderer as resolveRendererFn,
 } from './renderers.ts'
 import type { Variant } from './types.ts'
 
@@ -39,13 +38,30 @@ const resolveLabel = (label: Label | undefined, fallback: string): string => {
   return typeof label === 'function' ? label() : label
 }
 
-const resolveRenderer = (typeId: string, shape: ValueShape) => {
-  const override = getFieldRenderer(typeId)
-  if (override) return override
-  if (shape === 'pair') return defaultPairRenderers[typeId]
-  if (shape === 'list') return defaultListRenderers[typeId]
-  if (shape === 'relative') return defaultRelativeRenderers[typeId]
-  return defaultRenderers[typeId]
+// Bind the renderer resolver to the active DqlKit instance. Returns
+// a `(typeId, shape, delegateTo)` closure so the per-condition render
+// path doesn't re-inject on every row.
+const useRendererResolver = () => {
+  const state = inject(dqlKitInjectionKey, null) as DqlKitState | null
+  return (typeId: string, shape: ValueShape, delegateTo?: string) =>
+    resolveRendererFn(typeId, shape, {
+      overrides: state?.renderers ?? null,
+      delegateTo,
+    })
+}
+
+// Resolve a (possibly app-overridden) op label. Plugin instance's
+// `opLabels` wins over the schema-baked label, which wins over the op
+// name.
+const useOpLabelResolver = () => {
+  const state = inject(dqlKitInjectionKey, null) as DqlKitState | null
+  return (op: OpDef): string => {
+    const override = state?.opLabels[op.name]
+    if (override !== undefined) {
+      return typeof override === 'function' ? override() : override
+    }
+    return resolveLabel(op.label, op.name)
+  }
 }
 
 // In production builds (NODE_ENV === 'production') we suppress the
@@ -70,7 +86,7 @@ const fallbackRenderer = (typeId: string) => {
     // eslint-disable-next-line no-console
     console.warn(
       `[dql-kit/vue] No renderer registered for typeId="${typeId}". `
-        + `Falling back to StringInput. Register one via registerFieldRenderer("${typeId}", YourComponent).`,
+        + `Falling back to StringInput. Register one via createDqlKit({ renderers: { "${typeId}": YourComponent } }).`,
     )
   }
   return StringInput
@@ -99,6 +115,9 @@ export const FilterBuilder = defineComponent({
     // Expose the active filter to descendant renderers (used by id
     // autocomplete to drive search.setQuery and read labelOf).
     provide(filterInjectionKey, props.filter)
+
+    const resolveRenderer = useRendererResolver()
+    const resolveOpLabel = useOpLabelResolver()
 
     const schema = computed(() => props.filter.schema.value)
     const draft = computed(() => props.filter.draft.value)
@@ -160,7 +179,7 @@ export const FilterBuilder = defineComponent({
         [
           h('option', { value: '' }, '— op —'),
           ...ops.map((o) =>
-            h('option', { value: o.name }, resolveLabel(o.label, o.name)),
+            h('option', { value: o.name }, resolveOpLabel(o)),
           ),
         ],
       )
@@ -176,7 +195,7 @@ export const FilterBuilder = defineComponent({
       if (op.valueShape === 'none') return null
       if (!cond.field || !cond.op) return null
       const renderer =
-        resolveRenderer(rendererField.typeId, op.valueShape)
+        resolveRenderer(rendererField.typeId, op.valueShape, rendererField.delegateTo)
         ?? fallbackRenderer(rendererField.typeId)
       return h(renderer, {
         fieldKey: cond.field,

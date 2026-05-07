@@ -1,5 +1,15 @@
-import { RELATIVE_UNITS, type FieldDef, type Label, type RelativeUnit } from '@dql-kit/core'
-import { filterInjectionKey, type LabelStatus } from '@dql-kit/vue-headless'
+import {
+  RELATIVE_UNITS,
+  type FieldDef,
+  type Label,
+  type RelativeUnit,
+  type ValueShape,
+} from '@dql-kit/core'
+import {
+  filterInjectionKey,
+  type LabelStatus,
+  type RendererSet,
+} from '@dql-kit/vue-headless'
 import { computed, defineComponent, h, inject, ref, watch, type Component, type PropType } from 'vue'
 import { resolveRelativeUnitLabel } from './i18n.ts'
 
@@ -890,29 +900,82 @@ export const IdMultiAutocompleteInput = defineComponent({
   },
 })
 
-export const defaultRenderers: Readonly<Record<string, Component>> = Object.freeze({
-  string: StringInput,
-  number: NumberInput,
-  boolean: BooleanSwitch,
-  enum: EnumSelect,
-  date: DateInput,
-  datetime: DateTimeInput,
-  id: IdAutocompleteInput,
+/**
+ * Built-in renderer catalog. One `RendererSet` per builtin typeId,
+ * keyed by `default` plus per-shape overrides where the shape needs
+ * a different control (number/between is two inputs, datetime/inLast
+ * is amount+unit, string/in is a token list, ...).
+ *
+ * `resolveRenderer(typeId, shape, instance)` consults user-registered
+ * sets first (instance.renderers / fallback registry), and falls
+ * through to this catalog. To override one shape of a builtin, register
+ * a partial RendererSet — unspecified shapes still use this catalog.
+ */
+export const builtinRenderers: Readonly<Record<string, RendererSet>> = Object.freeze({
+  string:   { default: StringInput, list: StringTokenInput },
+  number:   { default: NumberInput, pair: NumberPairInput, list: NumberTokenInput },
+  boolean:  { default: BooleanSwitch },
+  enum:     { default: EnumSelect, list: EnumMultiSelect },
+  date:     { default: DateInput, pair: DateRangeInput },
+  datetime: { default: DateTimeInput, pair: DateTimeRangeInput, relative: DateTimeInLastInput },
+  id:       { default: IdAutocompleteInput, list: IdMultiAutocompleteInput },
 })
 
-export const defaultPairRenderers: Readonly<Record<string, Component>> = Object.freeze({
-  number: NumberPairInput,
-  date: DateRangeInput,
-  datetime: DateTimeRangeInput,
-})
+const isComponent = (v: RendererSet | undefined): v is Component =>
+  v != null
+  && typeof v === 'object'
+  && (typeof (v as { setup?: unknown }).setup === 'function'
+    || typeof (v as { render?: unknown }).render === 'function'
+    // function-form components (() => VNode) — we don't expect these
+    // but accept for completeness.
+    || typeof v === 'function')
 
-export const defaultListRenderers: Readonly<Record<string, Component>> = Object.freeze({
-  string: StringTokenInput,
-  number: NumberTokenInput,
-  enum: EnumMultiSelect,
-  id: IdMultiAutocompleteInput,
-})
+/**
+ * Resolve `(typeId, shape) → Component`.
+ *
+ *   1. Look up user-registered set for `typeId` on the active
+ *      `DqlKitState` (passed in by FilterBuilder / consumer).
+ *   2. If found, pick shape-specific entry, else `default`.
+ *   3. Otherwise fall through to `builtinRenderers[typeId]` with the
+ *      same shape→default lookup.
+ *   4. If the field has `delegateTo`, recurse on the delegated typeId —
+ *      `f.custom({ typeId: 'fulltext', delegateTo: 'string' })`
+ *      automatically gets string renderers without needing to
+ *      register anything.
+ */
+export const resolveRenderer = (
+  typeId: string,
+  shape: ValueShape,
+  options: {
+    /**
+     * Optional renderer overrides keyed by typeId. Pass
+     * `dqlKit.renderers` (a Map) when calling from inside a
+     * component that has the plugin installed.
+     */
+    overrides?: Map<string, RendererSet> | null
+    delegateTo?: string
+  } = {},
+): Component | undefined => {
+  const { overrides, delegateTo } = options
+  type ShapeMap = { default?: Component, pair?: Component, list?: Component, relative?: Component }
+  const pickFromSet = (set: RendererSet | undefined): Component | undefined => {
+    if (!set) return undefined
+    if (isComponent(set)) return set
+    const map = set as ShapeMap
+    return map[shape as keyof ShapeMap] ?? map.default
+  }
 
-export const defaultRelativeRenderers: Readonly<Record<string, Component>> = Object.freeze({
-  datetime: DateTimeInLastInput,
-})
+  // 1) overrides → 2) builtin → 3) delegateTo recursion
+  const overrideSet = overrides?.get(typeId)
+  if (overrideSet) {
+    const r = pickFromSet(overrideSet)
+    if (r) return r
+  }
+  const builtin = pickFromSet(builtinRenderers[typeId])
+  if (builtin) return builtin
+
+  if (delegateTo && delegateTo !== typeId) {
+    return resolveRenderer(delegateTo, shape, { overrides })
+  }
+  return undefined
+}

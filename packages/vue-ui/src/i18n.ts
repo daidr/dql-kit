@@ -1,46 +1,36 @@
-import type { Label, RelativeUnit } from '@dql-kit/core'
-import { ref, type Ref } from 'vue'
+import type { RelativeUnit } from '@dql-kit/core'
+import {
+  dqlKitInjectionKey,
+  type DqlKitState,
+  type RelativeUnitLabels,
+} from '@dql-kit/vue-headless'
+import { getCurrentInstance, inject } from 'vue'
+
+export type { RelativeUnitLabels }
 
 /**
- * App-supplied label table for the relative-time units (`minute` /
- * `hour` / `day` / `week` / `month`). Values follow `Label = string |
- * (() => string)`:
- *
- *  - Pass plain strings for static localisation:
- *      setRelativeUnitLabels({ day: '天', week: '周', ... })
- *
- *  - Pass lazy functions to plug into a reactive i18n source (e.g.
- *    vue-i18n). The function is invoked at render time, so when the
- *    underlying locale ref changes, components that read these labels
- *    re-render automatically:
- *
- *      import { i18n } from '@/plugins/i18n'
- *      setRelativeUnitLabels({
- *        day:  () => i18n.global.t('dql.unit.day'),
- *        week: () => i18n.global.t('dql.unit.week'),
- *        ...
- *      })
- *
- * Units missing from the map fall back to their key string (`'day'`,
- * `'week'`, ...), so callers can register a partial map without
- * breaking unspecified units.
+ * Resolve the active dql-kit state from the Vue tree, or `null` when
+ * no plugin is installed (e.g. a renderer mounted outside of any
+ * `app.use(createDqlKit(...))` boundary). Callers fall back to the
+ * unit key string in that case.
  */
-export type RelativeUnitLabels = Partial<Record<RelativeUnit, Label>>
-
-const labelsRef: Ref<RelativeUnitLabels> = ref({})
-
-/** Replace the entire relative-unit label map. Pass `{}` to reset. */
-export const setRelativeUnitLabels = (labels: RelativeUnitLabels): void => {
-  labelsRef.value = { ...labels }
+const useState = (): DqlKitState | null => {
+  if (!getCurrentInstance()) return null
+  return inject(dqlKitInjectionKey, null)
 }
 
 /**
- * Resolve a unit's user-facing label, evaluating lazy functions at call
- * time so reactive i18n sources (e.g. vue-i18n) stay live. Falls back
- * to the unit key string when no label is registered for the unit.
+ * Resolve a unit's user-facing label, evaluating lazy thunks at call
+ * time so reactive i18n sources (e.g. vue-i18n) stay live.
+ *
+ * Falls back to the unit key string itself (`'day'`, `'week'`, ...)
+ * when no plugin is installed or the unit isn't registered. Apps
+ * register labels via `createDqlKit({ relativeUnitLabels: ... })`.
  */
 export const resolveRelativeUnitLabel = (unit: RelativeUnit | string): string => {
-  const l = (labelsRef.value as Record<string, Label | undefined>)[unit]
+  const state = useState()
+  const labels = state?.relativeUnitLabels as Record<string, unknown> | undefined
+  const l = labels?.[unit]
   if (l === undefined) return unit
-  return typeof l === 'function' ? l() : l
+  return typeof l === 'function' ? (l as () => string)() : (l as string)
 }

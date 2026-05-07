@@ -16,7 +16,8 @@ import {
   createRouter,
   type Router,
 } from 'vue-router'
-import { useFilter, type UseFilterReturn } from '../src/index.ts'
+import { useFilter, type UseFilterReturn } from '@dql-kit/vue-headless'
+import { vueRouterUrlAdapter } from '../src/index.ts'
 
 const schemaA = defineFilterSchema({
   fields: {
@@ -63,15 +64,17 @@ const buildPair = async (
   let filterB!: FilterB
   const Harness = defineComponent({
     setup() {
+      const adapterA = sync === 'url' ? vueRouterUrlAdapter({ queryKey: options.keyA ?? 'a' }) : 'none'
+      const adapterB = sync === 'url' ? vueRouterUrlAdapter({ queryKey: options.keyB ?? 'b' }) : 'none'
       filterA = useFilter({
         schema: schemaA,
-        sync,
+        sync: adapterA,
         queryKey: options.keyA ?? 'a',
         persistDraft: options.persistA,
       }) as FilterA
       filterB = useFilter({
         schema: schemaB,
-        sync,
+        sync: adapterB,
         queryKey: options.keyB ?? 'b',
         persistDraft: options.persistB,
       }) as FilterB

@@ -46,6 +46,12 @@ export interface FieldDef {
   ops: OpDef[]
   enumValues?: ReadonlyArray<{ value: string | number, label?: Label }>
   itemType?: FieldDef
+  // For `f.custom({ typeId: 'fulltext', delegateTo: 'string' })`: tells
+  // value-type checks, default UI renderers, and SQL op fallbacks to
+  // behave as if the field were the delegated builtin. Lets a custom
+  // typeId be a *routing tag* (consumed by adapter overrides) without
+  // forcing the consumer to re-implement every op handler from scratch.
+  delegateTo?: BuiltinFieldTypeId
 }
 
 // Per-typeId narrowed shapes — these are what `f.string()`, `f.id<ID>()`
@@ -63,15 +69,19 @@ export interface EnumField<V extends string | number = string | number>
 }
 export interface DateField extends FieldDef { typeId: 'date' }
 export interface DateTimeField extends FieldDef { typeId: 'datetime' }
-// `__idBrand` is a phantom marker carrying the concrete ID type. It is
-// optional + readonly + never set at runtime, so a value of type
-// `IdField<number>` is still a valid `FieldDef` literal at construction
-// sites; the brand only exists in the type system to keep the ID
-// parameter alive across schema → consumer.
+
+// Nominal brand for `IdField<ID>`. The key is a `unique symbol` in the
+// type system but never set at runtime, so:
+//   - `IdField<string>` cannot be assigned to `IdField<number>` (TS
+//     compares the unique-symbol property's value type);
+//   - `f.id<number>()`'s runtime object literal doesn't actually carry
+//     the brand — the field is optional (`?`) in the interface so the
+//     literal is still structurally compatible.
+declare const idBrand: unique symbol
 export interface IdField<ID extends string | number = string | number>
   extends FieldDef {
   typeId: 'id'
-  readonly __idBrand?: ID
+  readonly [idBrand]?: ID
 }
 export interface ArrayField<Item extends FieldDef = FieldDef> extends FieldDef {
   typeId: 'array'
@@ -122,6 +132,16 @@ export type DroppedNode = {
   path: NodePath
   reason: ValidationError['code']
   detail?: unknown
+}
+
+// Result of `analyze(draft, schema)` — a single tree walk produces both
+// the pruned ValidAST (for executing/serialising) and the per-node
+// errors (for surfacing in UI). Consumers that previously called
+// `prune` + `validate` separately should switch to `analyze` and
+// destructure to avoid double-walking.
+export type Analysis = {
+  ast: ValidAST
+  errors: ValidationError[]
 }
 
 export const isGroup = (n: DraftNode | ValidNode): n is DraftGroup | ValidGroup =>

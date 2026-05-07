@@ -3,11 +3,12 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 import {
-  createMemoryHistory,
-  createRouter,
-  type Router,
-} from 'vue-router'
-import { useFilter, type UseFilterOptions, type UseFilterReturn } from '../src/index.ts'
+  createMemoryUrlAdapter,
+  useFilter,
+  type UrlAdapter,
+  type UseFilterOptions,
+  type UseFilterReturn,
+} from '../src/index.ts'
 
 const schema = defineFilterSchema({
   fields: {
@@ -20,33 +21,33 @@ type Filter = UseFilterReturn<typeof schema>
 
 const STORAGE_PREFIX = 'dql-kit:draft:'
 
+type HarnessOptions = Omit<UseFilterOptions<typeof schema>, 'schema' | 'sync'> & {
+  /** Initial URL adapter content (analogous to a route query). */
+  initialUrl?: string
+  /**
+   * `'memory'` → `createMemoryUrlAdapter()`; `'none'` (default) skips
+   * URL sync. The persist-mode tests don't need the vue-router
+   * adapter — that lives in `@dql-kit/vue-router-sync`.
+   */
+  sync?: 'memory' | 'none'
+}
+
 const buildHarness = async (
-  options: Omit<UseFilterOptions<typeof schema>, 'schema'> & {
-    initialPath?: string
-    withRouter?: boolean
-  } = {},
+  options: HarnessOptions = {},
 ): Promise<{
-  router: Router | null
+  adapter: UrlAdapter | null
   filter: Filter
   wrapper: VueWrapper
 }> => {
-  const useRouter = options.withRouter ?? options.sync === 'url'
-  let router: Router | null = null
-  if (useRouter) {
-    router = createRouter({
-      history: createMemoryHistory(),
-      routes: [{ path: '/', component: { render: () => null } }],
-    })
-    await router.push(options.initialPath ?? '/')
-    await router.isReady()
-  }
+  const adapter: UrlAdapter | null =
+    options.sync === 'memory' ? createMemoryUrlAdapter(options.initialUrl ?? '') : null
 
   let filter!: Filter
   const Harness = defineComponent({
     setup() {
       filter = useFilter({
         schema,
-        sync: options.sync,
+        sync: adapter ?? 'none',
         queryKey: options.queryKey,
         initial: options.initial,
         persistDraft: options.persistDraft,
@@ -55,12 +56,9 @@ const buildHarness = async (
     },
   })
 
-  const wrapper = mount(
-    Harness,
-    router ? { global: { plugins: [router] } } : {},
-  )
+  const wrapper = mount(Harness)
 
-  return { router, filter, wrapper }
+  return { adapter, filter, wrapper }
 }
 
 describe('useFilter — persistDraft default (\'none\')', () => {
@@ -216,8 +214,8 @@ describe('useFilter — persistDraft: \'session\' restore-on-mount', () => {
     }
 
     const { filter, wrapper } = await buildHarness({
-      sync: 'url',
-      initialPath: `/?filter=${toUrl(urlAst)}`,
+      sync: 'memory',
+      initialUrl: toUrl(urlAst),
       persistDraft: 'session',
     })
 
@@ -236,8 +234,8 @@ describe('useFilter — persistDraft: \'session\' restore-on-mount', () => {
       children: [{ field: 'title', op: 'eq', value: 'from-url' }],
     }
     const { filter, wrapper } = await buildHarness({
-      sync: 'url',
-      initialPath: `/?filter=${toUrl(ast)}`,
+      sync: 'memory',
+      initialUrl: toUrl(ast),
       persistDraft: 'session',
     })
     expect(filter.valid.value).toEqual(ast)

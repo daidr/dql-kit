@@ -1,11 +1,11 @@
 import {
+  analyze,
+  astEqual,
   emptyAst,
   emptyDraft,
   fromUrl,
   isGroup,
-  prune as pruneAst,
   toUrl,
-  validate as validateAst,
   type DraftAST,
   type DraftCondition,
   type DraftGroup,
@@ -17,8 +17,18 @@ import {
   type ValidNode,
   type ValidationError,
 } from '@dql-kit/core'
-import { computed, isRef, ref, toRaw, watch, type ComputedRef, type Ref } from 'vue'
-import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import {
+  computed,
+  effectScope,
+  getCurrentScope,
+  isRef,
+  onScopeDispose,
+  ref,
+  toRaw,
+  watch,
+  type ComputedRef,
+  type Ref,
+} from 'vue'
 import { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
 import type {
   CommitMode,
@@ -26,10 +36,10 @@ import type {
   FetcherMapFor,
   FilterActions,
   SearchSlot,
-  SyncMode,
   UseFilterOptions,
   UseFilterReturn,
 } from './types.ts'
+import type { UrlAdapter } from './urlAdapter.ts'
 
 const cloneDraft = <T>(value: T): T => structuredClone(value)
 
@@ -55,16 +65,8 @@ const navigateParent = (
   return { parent: parent as DraftGroup, index: path[path.length - 1]! }
 }
 
-const queryValueAsString = (
-  raw: string | (string | null)[] | null | undefined,
-): string => {
-  if (typeof raw === 'string') return raw
-  return ''
-}
-
 // sessionStorage key prefix. queryKey is appended so two filters on one page
-// (e.g. `?a=...&b=...`) get disjoint storage entries the same way they get
-// disjoint URL keys. Prefix exists so the keys are debug-greppable in devtools.
+// get disjoint storage entries the same way they get disjoint URL keys.
 const PERSIST_KEY_PREFIX = 'dql-kit:draft:'
 
 const getSessionStorage = (): Storage | null => {
@@ -90,18 +92,18 @@ const isDraftLike = (v: unknown): v is DraftAST => {
 export const useFilter = <S extends FilterSchema>(
   opts: UseFilterOptions<S>,
 ): UseFilterReturn<S> => {
-  const sync: SyncMode = opts.sync ?? 'none'
+  // Default sync = 'none'. URL sync is opt-in: pass an adapter (e.g.
+  // `vueRouterUrlAdapter()` from `@dql-kit/vue-headless/vue-router`) or
+  // any object matching `UrlAdapter`.
+  const sync: 'none' | UrlAdapter = opts.sync ?? 'none'
   const commitMode: CommitMode = opts.commitMode ?? 'auto'
   const queryKey = opts.queryKey ?? 'filter'
   const persistMode = opts.persistDraft ?? 'none'
   const storageKey = PERSIST_KEY_PREFIX + queryKey
+  const urlAdapter: UrlAdapter | null = sync === 'none' ? null : sync
 
   // FetcherMap is captured at hook-call time. Treating it as immutable
-  // for the lifetime of a useFilter instance keeps the orchestrator
-  // simple — if callers want hot-swap fetchers they can re-mount.
-  // The public `fetchers` option is the schema-strict `FetcherMapFor<S>`,
-  // but internally we treat it as the loose `FetcherMap` (any IdFetcher)
-  // since the orchestrator dispatches by string fieldKey at runtime.
+  // for the lifetime of a useFilter instance keeps the orchestrator simple.
   const fetcherMap: FetcherMap = (opts.fetchers ?? {}) as FetcherMap
   const fetcherFor = (fieldKey: string): IdFetcher | undefined => fetcherMap[fieldKey]
 
@@ -111,24 +113,13 @@ export const useFilter = <S extends FilterSchema>(
       : (opts.schema as S | undefined),
   )
 
-  const router = sync === 'url' ? useRouter() : undefined
-  const route = sync === 'url' ? useRoute() : undefined
-  if (sync === 'url' && (!router || !route)) {
-    throw new Error(
-      `[dql-kit/vue] useFilter({ sync: 'url' }) requires a vue-router context (no useRouter()/useRoute() available). Install vue-router and provide it via app.use(router), or use sync: 'none'.`,
-    )
-  }
-
   const dropped: Ref<DroppedNode[]> = ref([])
 
   // Merge rule when persistDraft: 'session' is enabled — saved draft wins
-  // entirely if it exists. Rationale: a saved draft was written *after* the
-  // previous session reconciled URL → draft, so it already contains the
-  // URL-derived Valid AST plus any in-progress (incomplete) nodes the user
-  // hadn't finished. Reusing it preserves both. If the URL changed externally
-  // between sessions, the saved draft still wins on first paint; the URL
-  // watcher (when sync: 'url') will then run on the next user edit and the
-  // valid → URL writer reconciles. No saved draft → fall back to URL → initial.
+  // entirely if it exists. A saved draft was written *after* the previous
+  // session reconciled URL → draft, so it already contains the URL-derived
+  // Valid AST plus any in-progress (incomplete) nodes. Reusing it preserves
+  // both. No saved draft → fall back to URL → initial.
   const readPersistedDraft = (): DraftAST | null => {
     if (persistMode !== 'session') return null
     const storage = getSessionStorage()
@@ -144,17 +135,11 @@ export const useFilter = <S extends FilterSchema>(
     return null
   }
 
-  // Compute draft + committed AST seeds together so persistDraft + URL
-  // can stay independent: the URL is the canonical "last committed"
-  // state, while a persisted draft (if any) carries the user's
-  // in-progress edits across reloads. In `commitMode: 'manual'` this
-  // means the popover survives a refresh with the user's pending
-  // changes intact, but URL still reflects what was actually applied.
   const computeInitialState = (): { draft: DraftAST, committedAst: ValidAST } => {
     const s = schemaRef.value
     let urlAst: ValidAST | undefined
-    if (route && s) {
-      const raw = queryValueAsString(route.query[queryKey])
+    if (urlAdapter && s) {
+      const raw = urlAdapter.read()
       if (raw.length > 0) {
         const { ast, dropped: d } = fromUrl(raw, s)
         if (d.length > 0) dropped.value = d
@@ -195,6 +180,14 @@ export const useFilter = <S extends FilterSchema>(
   const committedValidRef = ref<ValidAST>(initialState.committedAst) as Ref<ValidAST>
 
   const debounceMs = opts.debounceMs ?? 250
+
+  // Wrap all reactive work in a detached effect scope. We bind the
+  // scope-stop hook to the *parent* scope (the host component) only if
+  // one is active — otherwise the consumer is on their own for
+  // teardown (e.g. a test calling useFilter directly without mount).
+  // This avoids the `onScopeDispose() called with no active scope`
+  // warning Vue prints when registering hooks outside setup().
+  const scope = effectScope(true)
   const orchestrator = createAsyncOrchestrator()
 
   const setSearchQuery = (fieldKey: string, query: string): void => {
@@ -225,28 +218,19 @@ export const useFilter = <S extends FilterSchema>(
     setQuery: setSearchQuery,
   } as SearchSlotState & { setQuery: (k: string, q: string) => void })
 
-  const valid: ComputedRef<ValidAST> = computed(() => {
+  // Single analysis pass produces both the pruned ValidAST and the per-
+  // node ValidationErrors — replaces the old `prune` + `validate` double
+  // walk.
+  const analysis = computed(() => {
     const s = schemaRef.value
-    if (!s) return emptyAst()
+    if (!s) return { ast: emptyAst(), errors: [] as ValidationError[] }
     const plainDraft = cloneDraft(toRaw(draft.value))
-    return pruneAst(plainDraft, s)
+    return analyze(plainDraft, s)
   })
 
-  const errors: ComputedRef<ValidationError[]> = computed(() => {
-    const s = schemaRef.value
-    if (!s) return []
-    const plainDraft = cloneDraft(toRaw(draft.value))
-    const result = validateAst(plainDraft, s)
-    return result.ok ? [] : result.errors
-  })
-
+  const valid: ComputedRef<ValidAST> = computed(() => analysis.value.ast)
+  const errors: ComputedRef<ValidationError[]> = computed(() => analysis.value.errors)
   const committedValid: ComputedRef<ValidAST> = computed(() => committedValidRef.value)
-
-  // AST equality via JSON serialisation. ValidAST is plain data with a
-  // stable field order from prune (combinator, children) / pruneCondition
-  // (field, op, value), so JSON.stringify is deterministic.
-  const astEqual = (a: ValidAST, b: ValidAST): boolean =>
-    JSON.stringify(a) === JSON.stringify(b)
 
   const isDirty: ComputedRef<boolean> = computed(() => {
     if (commitMode === 'auto') return false
@@ -255,24 +239,12 @@ export const useFilter = <S extends FilterSchema>(
 
   const commit = (): void => {
     if (commitMode === 'auto') return
-    // Snapshot current valid; clone so downstream mutations of either
-    // side don't bleed into the other.
     committedValidRef.value = cloneDraft(toRaw(valid.value)) as ValidAST
   }
 
   const discard = (): void => {
     if (commitMode === 'auto') return
     draft.value = cloneDraft(toRaw(committedValidRef.value)) as DraftAST
-  }
-
-  // In 'auto' mode commit happens automatically on every draft change.
-  // The watcher below keeps committedValidRef in lock-step with valid,
-  // so URL / persistDraft writers (which observe committedValid) see
-  // edits flow through immediately.
-  if (commitMode === 'auto') {
-    watch(valid, (v) => {
-      committedValidRef.value = cloneDraft(toRaw(v)) as ValidAST
-    })
   }
 
   const mutate = (fn: (d: DraftAST) => void): void => {
@@ -292,9 +264,9 @@ export const useFilter = <S extends FilterSchema>(
         let field: string | null = condition?.field ?? null
         let op: string | null = condition?.op ?? null
         // If caller gave a field but no op, auto-pick the field's first
-        // op — matches the field-swap auto-fill in updateNode so callers
-        // who go either way (addCondition with field, or addCondition()
-        // followed by updateNode field) land on the same state.
+        // op so callers landing here from either path (addCondition with
+        // field, or addCondition() followed by updateNode field) end up
+        // in the same state.
         if (field && op === null && s) {
           const fieldDef = s.fields[field]
           op = fieldDef?.ops[0]?.name ?? null
@@ -324,9 +296,7 @@ export const useFilter = <S extends FilterSchema>(
 
         // Field swap: reset op + value, then auto-pick the first op from
         // the new field's op list so the user lands in a valid state with
-        // one click. Falls back to null if the schema isn't available or
-        // the field is unknown — the existing prune / validate guards
-        // still catch incomplete drafts.
+        // one click.
         if ('field' in partial && partial.field !== undefined && partial.field !== cond.field) {
           cond.field = partial.field
           const fieldDef = s?.fields[partial.field]
@@ -334,10 +304,8 @@ export const useFilter = <S extends FilterSchema>(
           delete cond.value
         }
         // Op swap: drop value when the new op's valueShape differs from
-        // the previous one (e.g. `between` → `eq` invalidates the old
-        // [a, b] tuple). Preserve value when shape stays the same
-        // (eq ↔ neq, contains ↔ notContains, ...) so single-op tweaks
-        // don't lose the user's input.
+        // the previous one. Preserve value when shape stays the same so
+        // single-op tweaks don't lose user input.
         if ('op' in partial && partial.op !== undefined && partial.op !== cond.op) {
           const fieldDef = cond.field && s ? s.fields[cond.field] : undefined
           const oldOp = fieldDef?.ops.find((o) => o.name === cond.op)
@@ -376,10 +344,9 @@ export const useFilter = <S extends FilterSchema>(
 
   const applyAst = (ast: ValidAST): void => {
     draft.value = cloneDraft(ast) as DraftAST
-    // applyAst is the "set the entire filter state" call (loading a
-    // saved preset, replaying an external AST, ...). In 'manual' mode
-    // we treat it as an implicit commit so URL / persistDraft reflect
-    // the new state without waiting for an explicit commit().
+    // applyAst is the "set the entire filter state" call. In 'manual'
+    // mode treat it as an implicit commit so URL / persistDraft reflect
+    // the new state without waiting for explicit commit().
     committedValidRef.value = cloneDraft(ast) as ValidAST
   }
 
@@ -424,27 +391,46 @@ export const useFilter = <S extends FilterSchema>(
     }
   }
 
-  watch(valid, eagerResolve, { immediate: true })
-
   const labelOf = orchestrator.labelOf
 
   const invalidateLabels = (fieldKey?: string): void => {
     orchestrator.invalidateLabels(fieldKey)
-    // Re-trigger resolve for everything still referenced by the AST so the
-    // cache refills rather than staying empty until the next AST change.
     eagerResolve(valid.value)
   }
 
-  if (sync === 'url' && router && route) {
-    // External URL change → reset both draft and committedValidRef.
-    // We compare against committedValidRef (not `valid`) because that's
-    // what we last *wrote* to the URL — guards against the watcher
-    // firing on our own writeback. Any uncommitted draft edits are
-    // discarded, matching how a user-initiated URL navigation would
-    // behave (back/forward, paste, share link).
-    watch(
-      () => queryValueAsString(route.query[queryKey]),
-      (raw) => {
+  const dismissDropped = (): void => {
+    dropped.value = []
+  }
+
+  // Bind the detached scope's teardown to whatever active scope the
+  // caller is in (component setup, parent effectScope, ...). If
+  // there's no active scope, skip — the consumer must call
+  // `filter.dispose()` manually if they want cleanup.
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      orchestrator.dispose()
+      scope.stop()
+    })
+  }
+  scope.run(() => {
+    // 'auto' commit mirror — keeps committedValidRef in lock-step with
+    // valid so URL / persistDraft writers (which observe committedValid)
+    // see edits flow through immediately.
+    if (commitMode === 'auto') {
+      watch(valid, (v) => {
+        committedValidRef.value = cloneDraft(toRaw(v)) as ValidAST
+      })
+    }
+
+    // Eager resolve — fires once on mount and on every valid change so
+    // labels for new id values fetch right away.
+    watch(valid, eagerResolve, { immediate: true })
+
+    if (urlAdapter) {
+      // External URL change → reset both draft and committedValidRef.
+      // We compare against committedValidRef (not `valid`) because that's
+      // what we last *wrote* — guards the watcher firing on our own writeback.
+      const stopExternal = urlAdapter.watch((raw) => {
         const s = schemaRef.value
         if (!s) return
         const currentEncoded = toUrl(committedValidRef.value)
@@ -460,58 +446,39 @@ export const useFilter = <S extends FilterSchema>(
         if (d.length > 0) dropped.value = d
         draft.value = cloneDraft(ast) as DraftAST
         committedValidRef.value = ast
-      },
-    )
+      })
+      onScopeDispose(stopExternal)
 
-    // Outgoing writer observes committedValid. In 'auto' mode this
-    // updates on every keystroke (live edits → URL), in 'manual' it
-    // updates only when commit() runs (batch apply → URL).
-    watch(committedValid, (newVal) => {
-      const encoded = toUrl(newVal)
-      const cur = queryValueAsString(route.query[queryKey])
-      if (cur === encoded) return
-      const nextQuery: LocationQueryRaw = { ...route.query }
-      if (encoded.length === 0) {
-        delete nextQuery[queryKey]
-      } else {
-        nextQuery[queryKey] = encoded
-      }
-      void router.replace({ query: nextQuery })
-    })
-  }
-
-  if (persistMode === 'session') {
-    const storage = getSessionStorage()
-    if (storage) {
-      // Mirror every draft mutation into sessionStorage. Empty AST removes the
-      // key (so devtools shows a clean slate after `clear()` and the initial
-      // load doesn't restore a stale empty entry). Storage errors (quota,
-      // disabled, private mode) are silently swallowed — losing persistence
-      // is preferable to crashing the composable.
-      watch(draft, (next) => {
-        try {
-          if (isEmptyDraft(next)) {
-            storage.removeItem(storageKey)
-          } else {
-            storage.setItem(storageKey, JSON.stringify(next))
-          }
-        } catch {
-          /* quota / disabled — silent */
-        }
+      // Outgoing writer observes committedValid. In 'auto' mode this
+      // updates on every keystroke, in 'manual' only on commit().
+      watch(committedValid, (newVal) => {
+        const encoded = toUrl(newVal)
+        urlAdapter.write(encoded)
       })
     }
-  }
 
-  const dismissDropped = (): void => {
-    dropped.value = []
-  }
+    if (persistMode === 'session') {
+      const storage = getSessionStorage()
+      if (storage) {
+        // Mirror every draft mutation into sessionStorage. Empty AST removes
+        // the key so devtools shows a clean slate after `clear()`.
+        watch(draft, (next) => {
+          try {
+            if (isEmptyDraft(next)) {
+              storage.removeItem(storageKey)
+            } else {
+              storage.setItem(storageKey, JSON.stringify(next))
+            }
+          } catch {
+            /* quota / disabled — silent */
+          }
+        })
+      }
+    }
+  })
 
   return {
     schema: schemaRef,
-    // Re-expose the captured fetcher map. Cast to the schema-strict
-    // `FetcherMapFor<S>` shape — the runtime container is always the
-    // looser `FetcherMap` (any IdFetcher), but the surface type matches
-    // what the caller passed in via `opts.fetchers`.
     fetchers: fetcherMap as FetcherMapFor<S>,
     draft,
     valid,

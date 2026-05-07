@@ -37,9 +37,11 @@ export type AsyncOrchestrator = {
   // the dependency; the cache itself is a plain Map for fast O(1) lookup.
   labelOf: (fieldKey: string, id: string | number) => LabelStatus
   invalidateLabels: (fieldKey?: string) => void
-  // Test-only: synchronous read of the current cache contents, bypassing
-  // reactivity. Useful for unit-testing the orchestrator without mounting
-  // a component.
+  // Abort all in-flight searches, clear all timers and caches. Called
+  // by useFilter on scope dispose so unmounting a host component
+  // doesn't leak fetchers or memory.
+  dispose: () => void
+  // Test-only: synchronous read of the current cache contents.
   _peek: (fieldKey: string, id: string | number) => LabelStatus
 }
 
@@ -212,5 +214,15 @@ export const createAsyncOrchestrator = (): AsyncOrchestrator => {
   const _peek: AsyncOrchestrator['_peek'] = (fieldKey, id) =>
     cache.get(fieldKey)?.get(id) ?? { status: 'pending' }
 
-  return { setQuery, resolveBatch, labelOf, invalidateLabels, _peek }
+  const dispose: AsyncOrchestrator['dispose'] = () => {
+    for (const c of searchControllers.values()) {
+      if (c.abort) c.abort.abort()
+      if (c.debounceTimer !== null) clearTimeout(c.debounceTimer)
+    }
+    searchControllers.clear()
+    cache.clear()
+    bumpCache()
+  }
+
+  return { setQuery, resolveBatch, labelOf, invalidateLabels, dispose, _peek }
 }

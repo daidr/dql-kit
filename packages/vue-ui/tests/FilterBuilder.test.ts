@@ -1,14 +1,9 @@
 import { defineFilterSchema, f, type Item } from '@dql-kit/core'
-import {
-  fieldRendererRegistry,
-  registerFieldRenderer,
-  useFilter,
-} from '@dql-kit/vue-headless'
+import { createDqlKit, useFilter } from '@dql-kit/vue-headless'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { FilterBuilder } from '../src/index.ts'
-import * as mod from '../src/index.ts'
 
 const schema = defineFilterSchema({
   fields: {
@@ -774,9 +769,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
 })
 
 describe('FilterBuilder — relative-unit i18n labels', () => {
-  it('option text falls back to the unit key when no labels are registered', () => {
-    const { setRelativeUnitLabels } = mod
-    setRelativeUnitLabels({})
+  it('option text falls back to the unit key when no plugin is installed', () => {
     const filter = useFilter({
       schema,
       sync: 'none',
@@ -785,15 +778,18 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
       },
     })
+    // No app.use(dqlKit) — labels resolve to unit keys.
     const wrapper = mount(FilterBuilder, { props: { filter } })
     expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('day')
     expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('week')
+    wrapper.unmount()
   })
 
   it('static label map renders option text in the registered language', () => {
-    const { setRelativeUnitLabels } = mod
-    setRelativeUnitLabels({
-      minute: '分钟', hour: '小时', day: '天', week: '周', month: '月',
+    const dqlKit = createDqlKit({
+      relativeUnitLabels: {
+        minute: '分钟', hour: '小时', day: '天', week: '周', month: '月',
+      },
     })
     const filter = useFilter({
       schema,
@@ -803,24 +799,27 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter },
+      global: { plugins: [dqlKit] },
+    })
     expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('天')
     expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('周')
-    // Reset for subsequent tests in the file (module-level state).
-    setRelativeUnitLabels({})
+    wrapper.unmount()
   })
 
   it('lazy-function labels stay live when the underlying ref changes (vue-i18n style)', async () => {
-    const { setRelativeUnitLabels } = mod
     const locale = ref<'en' | 'zh'>('en')
     const dict: Record<string, Record<string, string>> = {
       en: { day: 'day', week: 'week' },
       zh: { day: '天', week: '周' },
     }
     const t = (k: string) => dict[locale.value]![k] ?? k
-    setRelativeUnitLabels({
-      day: () => t('day'),
-      week: () => t('week'),
+    const dqlKit = createDqlKit({
+      relativeUnitLabels: {
+        day: () => t('day'),
+        week: () => t('week'),
+      },
     })
     const filter = useFilter({
       schema,
@@ -830,7 +829,10 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter },
+      global: { plugins: [dqlKit] },
+    })
     expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('day')
     expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('week')
 
@@ -839,7 +841,7 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
     expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('天')
     expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('周')
 
-    setRelativeUnitLabels({})
+    wrapper.unmount()
   })
 })
 
@@ -1394,17 +1396,18 @@ describe('FilterBuilder — validation error indicators', () => {
 
 describe('FilterBuilder — custom type renderer dispatch', () => {
   // Each test uses a unique typeId so the warn-once dedup doesn't bleed
-  // across tests.
+  // across tests. Renderers are scoped to a freshly-built createDqlKit
+  // per test, so there's no cross-test bleed even though warnedTypeIds
+  // is module-level (the warn-once dedup is intentional for prod logs).
   let warnSpy: ReturnType<typeof vi.spyOn>
   beforeEach(() => {
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
   afterEach(() => {
     warnSpy.mockRestore()
-    fieldRendererRegistry.clear()
   })
 
-  it('registerFieldRenderer routes a custom typeId to the registered component', async () => {
+  it('createDqlKit({ renderers }) routes a custom typeId to the registered component', async () => {
     const updates: unknown[] = []
     const MoneyInput = defineComponent({
       props: {
@@ -1435,7 +1438,9 @@ describe('FilterBuilder — custom type renderer dispatch', () => {
       },
     })
 
-    registerFieldRenderer('money_unique_a', MoneyInput)
+    const dqlKit = createDqlKit({
+      renderers: { money_unique_a: MoneyInput },
+    })
 
     const moneySchema = defineFilterSchema({
       fields: {
@@ -1455,7 +1460,10 @@ describe('FilterBuilder — custom type renderer dispatch', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter },
+      global: { plugins: [dqlKit] },
+    })
     const moneyInput = wrapper.find('[data-testid="money-input"]')
     expect(moneyInput.exists()).toBe(true)
     expect(warnSpy).not.toHaveBeenCalled()
@@ -1493,7 +1501,7 @@ describe('FilterBuilder — custom type renderer dispatch', () => {
     expect(warnSpy).toHaveBeenCalled()
     const message = warnSpy.mock.calls[0]![0] as string
     expect(message).toContain('typeId="money_unique_b"')
-    expect(message).toContain('registerFieldRenderer')
+    expect(message).toContain('createDqlKit')
   })
 
   it('warn is deduplicated to once per typeId', () => {

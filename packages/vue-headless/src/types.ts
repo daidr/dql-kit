@@ -9,9 +9,21 @@ import type {
   ValidAST,
   ValidationError,
 } from '@dql-kit/core'
-import type { Component, ComputedRef, Ref } from 'vue'
+import type { Component } from 'vue'
+import type { ComputedRef, Ref } from 'vue'
+import type { UrlAdapter } from './urlAdapter.ts'
 
-export type SyncMode = 'url' | 'none'
+/**
+ * URL synchroniser. `'none'` (default) skips URL sync entirely; pass a
+ * `UrlAdapter` (e.g. `vueRouterUrlAdapter()` from
+ * `@dql-kit/vue-headless/vue-router`) to wire it up.
+ *
+ * URL sync is opt-in to keep the core hook router-agnostic — apps using
+ * Nuxt, Next-style file routing, hand-rolled history, or no router at
+ * all need their own adapter, and we don't want to make assumptions
+ * about which one is in play.
+ */
+export type SyncMode = 'none' | UrlAdapter
 
 /**
  * Controls when changes flow from the user-visible `valid` AST to the
@@ -19,36 +31,24 @@ export type SyncMode = 'url' | 'none'
  * external watcher the consumer hooks up.
  *
  * - `'auto'` (default): every keystroke flows through immediately.
- *   Matches the inline filter UX (filter sits on the page, edits apply
- *   live).
+ *   Matches inline-filter UX (filter sits on the page, edits apply live).
  * - `'manual'`: edits accumulate in `valid` only; the outside world
  *   sees `committedValid`, which only updates when the consumer calls
- *   `commit()`. Matches the popover / dialog "edit then apply" UX —
- *   the user can fiddle without spamming URL writes / fetch reloads.
+ *   `commit()`. Matches popover / dialog "edit then apply" UX.
  */
 export type CommitMode = 'auto' | 'manual'
 
 // Open structural form — accepts any string→IdFetcher map. Used as the
-// loose default when the schema's field types aren't recoverable
-// (e.g. `useFilter({ schema: someRef })` with widened generic). Consumers
-// who want strict per-field ID typing get it for free via `FetcherMapFor<S>`
-// below — TS picks that branch automatically when `schema` is a concrete
-// schema constant.
-//
-// Value type uses `IdFetcher<any>` deliberately: TS otherwise rejects
-// narrower fetchers being assigned to a wider `IdFetcher<string | number>`
-// (resolve's `ids: ID[]` is contravariant).
+// loose default when the schema's field types aren't recoverable.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type FetcherMap = Record<string, IdFetcher<any>>
 
 /**
  * Strict, schema-derived fetcher map. For each field whose declared
  * type is `IdField<ID>`, the corresponding entry is an
- * `IdFetcher<ID>` — so `f.id<number>()` requires (and only accepts)
- * an `IdFetcher<number>`. Non-id fields are excluded from the map.
- *
- * All entries are optional: a field with no fetcher just skips async
- * search/resolve and falls back to `'#<id>'` for labels.
+ * `IdFetcher<ID>`. Non-id fields are excluded. All entries are
+ * optional: a field with no fetcher just skips async search/resolve
+ * and falls back to `'#<id>'` for labels.
  */
 export type FetcherMapFor<S extends FilterSchema> = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -58,16 +58,15 @@ export type FetcherMapFor<S extends FilterSchema> = {
 
 export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
   schema: S | Ref<S | undefined>
-  /**
-   * Map of `f.id` field keys → async fetchers for label search/resolve.
-   * Strictly typed against the schema: keys are limited to `IdField`
-   * field names, values must match each field's declared ID type.
-   * Missing entries make those fields silently skip async work (id
-   * values still flow through the AST, only labels resolve to '#<id>'
-   * fallback in the UI).
-   */
   fetchers?: FetcherMapFor<S>
   initial?: ValidAST
+  /**
+   * URL sync. Default `'none'` — call sites must explicitly opt in to
+   * URL persistence by passing a `UrlAdapter`. Use the helper
+   * `vueRouterUrlAdapter()` from `@dql-kit/vue-headless/vue-router` for
+   * vue-router apps, or implement the `UrlAdapter` interface for any
+   * other router.
+   */
   sync?: SyncMode
   /**
    * When edits should reach URL / persistDraft / external watchers.
@@ -90,9 +89,6 @@ export type SearchSlot<ID = string | number> = {
   loading: boolean
   error: Error | null
   results: Item<ID>[]
-  // Stable closure attached to the slot — Vue auto-unwraps refs in templates,
-  // so callers can write `filter.search.setQuery(...)` from a template or
-  // `filter.search.value.setQuery(...)` from JS.
   setQuery: (fieldKey: string, query: string) => void
 }
 
@@ -107,46 +103,19 @@ export type FilterActions = {
 
 export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   schema: ComputedRef<S | undefined>
-  // The fetcher map captured at hook construction (or `{}` if none was
-  // passed). Exposed so consumers can derive a sibling `useFilter`
-  // sharing the same async backends — typical pattern: a popover-style
-  // editor that mirrors the page-level filter without re-declaring its
-  // fetchers. Treated as immutable for the lifetime of the instance.
   fetchers: FetcherMapFor<S>
   draft: Ref<DraftAST>
   /** Live valid AST derived from `draft`. Always reflects the latest edits. */
   valid: ComputedRef<ValidAST>
   /**
    * Last-committed valid AST. In `commitMode: 'auto'` this is identical
-   * to `valid`. In `'manual'` it lags behind until `commit()` is called
-   * — URL sync + persistDraft + any consumer-side watchers should
-   * observe THIS, not `valid`, to participate in the batch-commit
-   * lifecycle.
+   * to `valid`. In `'manual'` it lags behind until `commit()` is called.
    */
   committedValid: ComputedRef<ValidAST>
-  /**
-   * True when `valid` differs from `committedValid` — i.e. the user
-   * has uncommitted edits in `'manual'` mode. Always `false` in
-   * `'auto'` mode.
-   */
   isDirty: ComputedRef<boolean>
-  /**
-   * Promote the current `valid` to `committedValid`, triggering URL /
-   * persistDraft writers. No-op in `'auto'` mode (everything is
-   * already committed).
-   */
   commit: () => void
-  /**
-   * Reset `draft` back to the contents of `committedValid` — wires up
-   * to a "cancel" / popover-close-without-apply gesture. No-op in
-   * `'auto'` mode.
-   */
   discard: () => void
   errors: ComputedRef<ValidationError[]>
-  // Nodes dropped by the URL codec on schema mismatch. Populated when
-  // useFilter loads from a route query that referenced fields/ops/types
-  // the current schema no longer honours, or rebuilt on URL changes.
-  // `dismissDropped()` clears it (UI-side acknowledgement).
   dropped: Ref<DroppedNode[]>
   dismissDropped: () => void
   search: Ref<SearchSlot>
@@ -165,4 +134,7 @@ export type FieldRendererProps = {
   onUpdate: (value: unknown) => void
 }
 
-export type FieldRendererRegistry = Map<string, Component>
+// Component is referenced via FieldRendererProps consumers — kept here
+// so `@dql-kit/vue-headless` re-export of FieldRendererProps stays
+// self-contained without forcing users to import vue's `Component`.
+export type { Component }

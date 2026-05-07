@@ -2,6 +2,7 @@ import { builtinOps } from './ops.ts'
 import type {
   ArrayField,
   BooleanField,
+  BuiltinFieldTypeId,
   DateField,
   DateTimeField,
   EnumField,
@@ -21,7 +22,26 @@ type EnumOpts<V extends string | number> = CommonOpts & {
 
 type CustomOpts = CommonOpts & {
   typeId: string
-  ops: OpDef[]
+  ops?: OpDef[]
+  /**
+   * Make this custom typeId behave like a built-in field for everything
+   * the adapter / UI doesn't explicitly override:
+   *
+   * - **Value-type checks** treat the value as the delegated primitive
+   *   (e.g. `delegateTo: 'string'` rejects non-string values).
+   * - **Default UI renderer** falls back to the delegated builtin's
+   *   renderer set if no `registerRenderer(typeId, ...)` was supplied.
+   * - **SQL op handler** falls back to the delegated builtin's behaviour
+   *   when the adapter hasn't overridden the op for this typeId.
+   * - **Default ops** are inherited from the delegated builtin if `ops`
+   *   is omitted — this is what makes `f.custom({ typeId: 'fulltext',
+   *   delegateTo: 'string' })` work without restating string ops.
+   *
+   * The custom typeId is still preserved on the FieldDef, so adapter
+   * code can branch on `ctx.field.typeId` to inject custom behaviour
+   * (e.g. cross-column ILIKE) where it actually matters.
+   */
+  delegateTo?: BuiltinFieldTypeId
 }
 
 const opSets = {
@@ -40,7 +60,7 @@ const opSets = {
   datetime: [builtinOps.before, builtinOps.after, builtinOps.between, builtinOps.inLast],
   id:       [builtinOps.eq, builtinOps.neq, builtinOps.in, builtinOps.notIn],
   array:    [builtinOps.contains, builtinOps.notContains, builtinOps.containsAll, builtinOps.isEmpty],
-}
+} as const satisfies Record<BuiltinFieldTypeId, OpDef[]>
 
 // `withOps` mutates ops in-place via spread. Generic over the concrete
 // per-typeId interface so chaining preserves the narrow type
@@ -86,12 +106,13 @@ export const f = {
   },
   // ID phantom is preserved through the return type so consumers reading
   // `schema.fields.authorId` get back `IdField<number>` (or whatever ID
-  // they declared), even though the stored runtime FieldDef has no ID
-  // field.
+  // they declared). The brand uses a `unique symbol` key (see types.ts)
+  // so cross-ID assignments fail at the type level even though no
+  // brand value exists at runtime.
   id<ID extends string | number = string | number>(
     opts: CommonOpts = {},
   ): IdField<ID> {
-    return augment({ typeId: 'id', ops: opSets.id, ...opts } as IdField<ID>)
+    return augment({ typeId: 'id', ops: opSets.id, ...opts } as unknown as IdField<ID>)
   },
   array<Item extends FieldDef>(
     itemType: Item,
@@ -105,9 +126,18 @@ export const f = {
     } as ArrayField<Item>)
   },
   custom(opts: CustomOpts): FieldDef {
+    // If `ops` is omitted but `delegateTo` is set, inherit the delegated
+    // builtin's default op list — this is what lets `f.custom({
+    // typeId: 'fulltext', delegateTo: 'string' })` work as a "string
+    // with a tag" without re-listing builtinOps.
+    const ops =
+      opts.ops
+      ?? (opts.delegateTo ? opSets[opts.delegateTo] : undefined)
+      ?? []
     return augment({
       typeId: opts.typeId,
-      ops: opts.ops,
+      ops,
+      ...(opts.delegateTo !== undefined && { delegateTo: opts.delegateTo }),
       ...(opts.label !== undefined && { label: opts.label }),
       ...(opts.group !== undefined && { group: opts.group }),
     })

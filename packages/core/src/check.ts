@@ -39,8 +39,12 @@ export const checkShape = (value: unknown, shape: ValueShape): boolean => {
   }
 }
 
+// Resolve the *effective* primitive type for value-type checks. A custom
+// typeId with `delegateTo: 'string'` validates as a string; without
+// delegateTo, custom typeIds opt out of value-type checks (return true).
 const checkPrimitive = (field: FieldDef, value: unknown): boolean => {
-  switch (field.typeId) {
+  const effective = field.delegateTo ?? field.typeId
+  switch (effective) {
     case 'string':
       return typeof value === 'string'
     case 'number':
@@ -56,6 +60,8 @@ const checkPrimitive = (field: FieldDef, value: unknown): boolean => {
     case 'id':
       return typeof value === 'string' || typeof value === 'number'
     default:
+      // Custom typeIds without delegateTo: caller is on their own —
+      // adapter-side handlers should validate however they need.
       return true
   }
 }
@@ -84,9 +90,9 @@ export const checkValueType = (
 
 export const expectedTypeLabel = (field: FieldDef): string => {
   if (field.typeId === 'array' && field.itemType) {
-    return `array<${field.itemType.typeId}>`
+    return `array<${field.itemType.delegateTo ?? field.itemType.typeId}>`
   }
-  return field.typeId
+  return field.delegateTo ?? field.typeId
 }
 
 export const observedTypeLabel = (value: unknown): string => {

@@ -138,9 +138,12 @@ describe('createDrizzleTranslator — SQL execution', () => {
     expect(rows).toHaveLength(2)
   })
 
-  test('registerOp wires a custom op into toWhere', async () => {
-    const t = createDrizzleTranslator({ schema, table: articles })
-    t.registerOp('isFortyTwo', (col) => sql`${col} = 42`)
+  test('custom op via the ops option wires into toWhere', async () => {
+    const t = createDrizzleTranslator({
+      schema,
+      table: articles,
+      ops: { isFortyTwo: (col) => sql`${col} = 42` },
+    })
     const ast: ValidAST = {
       combinator: 'and',
       children: [{ field: 'rating', op: 'isFortyTwo', value: undefined }],
@@ -1214,7 +1217,7 @@ describe('createDrizzleTranslator — custom op via registerOp', () => {
     `)
   })
 
-  test('registerOp wires a custom op that pulls both halves out of the value object', async () => {
+  test('custom op via the ops option pulls both halves out of the value object', async () => {
     // Use the explicit `columns` form so a single AST field maps to a
     // pair of physical columns. `moneyEq` reads `value.amount` against
     // the explicitly-bound `priceAmount` column and `value.currency`
@@ -1222,13 +1225,15 @@ describe('createDrizzleTranslator — custom op via registerOp', () => {
     const t = createDrizzleTranslator({
       schema: moneySchema,
       columns: { price: moneyArticles.priceAmount },
-    })
-    t.registerOp('moneyEq', (col, value) => {
-      const v = value as { amount: number, currency: string }
-      // The mapped column is priceAmount; we cross-reference priceCurrency
-      // via the table directly. This is the typical pattern for
-      // composite-value custom ops.
-      return sql`${col} = ${v.amount} AND ${moneyArticles.priceCurrency} = ${v.currency}`
+      ops: {
+        moneyEq: (col, value) => {
+          const v = value as { amount: number, currency: string }
+          // The mapped column is priceAmount; we cross-reference priceCurrency
+          // via the table directly. This is the typical pattern for
+          // composite-value custom ops.
+          return sql`${col} = ${v.amount} AND ${moneyArticles.priceCurrency} = ${v.currency}`
+        },
+      },
     })
     const ast: ValidAST = {
       combinator: 'and',
@@ -1245,12 +1250,12 @@ describe('createDrizzleTranslator — custom op via registerOp', () => {
     expect(rows[0]).toMatchObject({ priceAmount: 2500, priceCurrency: 'USD' })
   })
 
-  test('translator throws an actionable error if a custom op never gets registered', () => {
+  test('translator throws an actionable error if a custom op never gets supplied', () => {
     const t = createDrizzleTranslator({
       schema: moneySchema,
       columns: { price: moneyArticles.priceAmount },
     })
-    // Note: no t.registerOp('moneyEq', ...) here.
+    // Note: no `ops: { moneyEq }` here.
     const ast: ValidAST = {
       combinator: 'and',
       children: [

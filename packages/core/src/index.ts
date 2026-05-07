@@ -6,6 +6,8 @@ export {
   emptyDraft,
   prune,
   validate,
+  analyze,
+  astEqual,
   astRefersTo,
   isCondition,
 } from './ast.ts'

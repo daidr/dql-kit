@@ -7,7 +7,12 @@ import {
   createRouter,
   type Router,
 } from 'vue-router'
-import { useFilter, type UseFilterOptions, type UseFilterReturn } from '../src/index.ts'
+import {
+  useFilter,
+  type UseFilterOptions,
+  type UseFilterReturn,
+} from '@dql-kit/vue-headless'
+import { vueRouterUrlAdapter } from '../src/index.ts'
 
 const schema = defineFilterSchema({
   fields: {
@@ -17,10 +22,18 @@ const schema = defineFilterSchema({
 
 type Filter = UseFilterReturn<typeof schema>
 
+type HarnessOptions = Omit<UseFilterOptions<typeof schema>, 'schema' | 'sync'> & {
+  initialPath?: string
+  /**
+   * `'url'` wires the canonical vue-router adapter; `'none'` (default)
+   * skips URL sync. Tests that previously passed `sync: 'url'` should
+   * keep passing it as a string here — the harness translates.
+   */
+  sync?: 'url' | 'none'
+}
+
 const buildHarness = async (
-  options: Omit<UseFilterOptions<typeof schema>, 'schema'> & {
-    initialPath?: string
-  } = {},
+  options: HarnessOptions = {},
 ): Promise<{
   router: Router
   filter: Filter
@@ -56,9 +69,13 @@ const buildHarness = async (
   let filter!: Filter
   const Harness = defineComponent({
     setup() {
+      const sync =
+        options.sync === 'url'
+          ? vueRouterUrlAdapter({ queryKey: options.queryKey })
+          : 'none'
       filter = useFilter({
         schema,
-        sync: options.sync,
+        sync,
         commitMode: options.commitMode,
         queryKey: options.queryKey,
         initial: options.initial,
@@ -72,7 +89,7 @@ const buildHarness = async (
   return { router, filter, wrapper, replaceCalls, pushCalls }
 }
 
-describe('useFilter — sync: \'url\' (vue-router integration)', () => {
+describe('useFilter — sync via vueRouterUrlAdapter', () => {
   it('reads initial state from route.query[queryKey] on mount', async () => {
     const ast: ValidAST = {
       combinator: 'and',
@@ -157,12 +174,13 @@ describe('useFilter — sync: \'url\' (vue-router integration)', () => {
   })
 })
 
-describe('useFilter — sync: \'none\' (router-free)', () => {
+describe('useFilter — default sync (router-free)', () => {
   it('does not require a router context', () => {
     let filter!: Filter
     const Harness = defineComponent({
       setup() {
-        filter = useFilter({ schema, sync: 'none' }) as Filter
+        // sync defaults to 'none' — no router, no adapter, no calls.
+        filter = useFilter({ schema }) as Filter
         return () => h('div')
       },
     })
@@ -193,11 +211,12 @@ describe('useFilter — sync: \'none\' (router-free)', () => {
   })
 })
 
-describe('useFilter — sync: \'url\' without router context', () => {
+describe('vueRouterUrlAdapter — without router context', () => {
   it('throws a clear error', () => {
     const Harness = defineComponent({
       setup() {
-        useFilter({ schema, sync: 'url' })
+        // No app.use(router) — adapter creation should throw.
+        useFilter({ schema, sync: vueRouterUrlAdapter() })
         return () => h('div')
       },
     })
@@ -205,9 +224,7 @@ describe('useFilter — sync: \'url\' without router context', () => {
   })
 })
 
-// Slice 11: schema-evolution dropped[] surface. The harness above uses a
-// schema with only `title`, so a URL referencing other field/op/type
-// combos lands in dropped[].
+// Slice 11: schema-evolution dropped[] surface.
 describe('useFilter — dropped[] schema evolution', () => {
   it('initial state has dropped: [] when the URL is clean', async () => {
     const { filter, wrapper } = await buildHarness({ sync: 'url' })
@@ -216,7 +233,6 @@ describe('useFilter — dropped[] schema evolution', () => {
   })
 
   it('initial state populates dropped[] when URL references an unknown field', async () => {
-    // Construct a URL by hand — `mystery` is not in the schema.
     const compact = { c: 'and', n: [{ f: 'mystery', o: 'eq', v: 'x' }] }
     const url = encodeURIComponent(JSON.stringify(compact))
     const { filter, wrapper } = await buildHarness({
@@ -258,7 +274,7 @@ describe('useFilter — dropped[] schema evolution', () => {
   })
 })
 
-describe("useFilter — sync: 'url' + commitMode: 'manual'", () => {
+describe("useFilter — vueRouterUrlAdapter + commitMode: 'manual'", () => {
   it('actions in manual mode do NOT write to URL until commit() is called', async () => {
     const { filter, router, wrapper, replaceCalls } = await buildHarness({
       sync: 'url',
@@ -268,7 +284,6 @@ describe("useFilter — sync: 'url' + commitMode: 'manual'", () => {
     filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'pending' })
     await flushPromises()
 
-    // No URL writes — manual mode batches edits until commit().
     expect(replaceCalls).toHaveLength(0)
     expect(router.currentRoute.value.query.filter).toBeUndefined()
     expect(filter.isDirty.value).toBe(true)
@@ -293,7 +308,6 @@ describe("useFilter — sync: 'url' + commitMode: 'manual'", () => {
       commitMode: 'manual',
       initialPath: `/?filter=${encoded}`,
     })
-    // Initial URL → both draft and committed reflect "committed".
     expect(filter.committedValid.value).toEqual(ast)
 
     filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'staged' })
@@ -307,10 +321,7 @@ describe("useFilter — sync: 'url' + commitMode: 'manual'", () => {
     expect(filter.draft.value.children).toEqual([
       { field: 'title', op: 'eq', value: 'committed' },
     ])
-    // No URL writeback — discard never crosses the commit boundary.
     expect(replaceCalls.length).toBe(writesBefore)
-    // Router exposes the query value already URL-decoded; compare
-    // against the decoded form, not the encoded `toUrl()` string.
     expect(router.currentRoute.value.query.filter).toBe(decodeURIComponent(encoded))
     wrapper.unmount()
   })
@@ -332,8 +343,6 @@ describe("useFilter — sync: 'url' + commitMode: 'manual'", () => {
     await router.push({ query: { filter: toUrl(newAst) } })
     await flushPromises()
 
-    // External URL change wipes out the unsaved draft and pins
-    // committedValid to the new state — same as a back/forward / paste.
     expect(filter.draft.value.children).toEqual(newAst.children)
     expect(filter.committedValid.value).toEqual(newAst)
     expect(filter.isDirty.value).toBe(false)

@@ -1,4 +1,4 @@
-import { isRelativeUnit } from '@dql-kit/core'
+import { isRelativeUnit, type FieldDef } from '@dql-kit/core'
 import {
   and as andSql,
   arrayContains,
@@ -23,23 +23,31 @@ import type { OpTranslator } from './types.ts'
 
 const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`)
 
+// Resolve the *effective* type for op-handler dispatch. A custom typeId
+// with `delegateTo: 'array'` triggers the array branch of `contains`;
+// without delegateTo, custom typeIds fall through to the string branch
+// (the historical default for all non-array fields).
+const effectiveTypeId = (field: FieldDef): string =>
+  field.delegateTo ?? field.typeId
+
 // Some ops share an op name across very different SQL semantics — `contains`
 // is ILIKE for string fields but `= ANY(col)` for PG array fields, and
 // `isEmpty` is `IS NULL OR = ''` for strings vs `cardinality(col) = 0` for
-// arrays. The op translator branches on field.typeId via the OpContext.
+// arrays. The op translator branches on the effective typeId via the
+// OpContext.
 
 export const drizzleOps: Record<string, OpTranslator> = {
   eq:           (col, v) => eq(col, v as never),
   neq:          (col, v) => ne(col, v as never),
   contains:     (col, v, ctx) => {
-    if (ctx.field.typeId === 'array') {
+    if (effectiveTypeId(ctx.field) === 'array') {
       // PG: scalar = ANY(array_column)
       return sql`${v} = ANY(${col})`
     }
     return ilike(col, `%${escapeLike(String(v))}%`)
   },
   notContains:  (col, v, ctx) => {
-    if (ctx.field.typeId === 'array') {
+    if (effectiveTypeId(ctx.field) === 'array') {
       // PG: scalar <> ALL(array_column). NULL elements yield NULL → row
       // dropped by WHERE, which matches "value not present" intent.
       return sql`${v} <> ALL(${col})`
@@ -49,7 +57,7 @@ export const drizzleOps: Record<string, OpTranslator> = {
   startsWith:   (col, v) => ilike(col, `${escapeLike(String(v))}%`),
   endsWith:     (col, v) => ilike(col, `%${escapeLike(String(v))}`),
   isEmpty:      (col, _v, ctx) => {
-    if (ctx.field.typeId === 'array') {
+    if (effectiveTypeId(ctx.field) === 'array') {
       // Array empty: NULL or zero-length. cardinality(NULL) is NULL, so the
       // explicit IS NULL branch is required to match the "no items" intent.
       return orSql(isNull(col), sql`cardinality(${col}) = 0`)!

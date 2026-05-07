@@ -7,11 +7,7 @@ import { drizzle } from 'drizzle-orm/pglite'
 import { integer, pgTable, serial, text } from 'drizzle-orm/pg-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
-import {
-  fieldRendererRegistry,
-  registerFieldRenderer,
-  useFilter,
-} from '@dql-kit/vue-headless'
+import { createDqlKit, useFilter } from '@dql-kit/vue-headless'
 import { FilterBuilder } from '../src/index.ts'
 
 const articles = pgTable('articles', {
@@ -268,9 +264,15 @@ const MoneyInput = defineComponent({
   },
 })
 
-describe('end-to-end: f.custom + registerFieldRenderer + registerOp', () => {
+describe('end-to-end: f.custom + createDqlKit({ renderers }) + ops', () => {
   let db: ReturnType<typeof drizzle>
   let client: PGlite
+  // Built once for the suite — registers MoneyInput for the
+  // `moneyE2E` typeId. Provided to mount() via global.plugins so the
+  // dqlKit injection key is in scope for FilterBuilder.
+  const dqlKit = createDqlKit({
+    renderers: { moneyE2E: MoneyInput },
+  })
 
   beforeAll(async () => {
     client = new PGlite()
@@ -289,11 +291,6 @@ describe('end-to-end: f.custom + registerFieldRenderer + registerOp', () => {
         (250, 'USD'),
         (250, 'JPY');
     `)
-    registerFieldRenderer('moneyE2E', MoneyInput)
-  })
-
-  afterAll(() => {
-    fieldRendererRegistry.clear()
   })
 
   it('drives the full extensibility path with one shared schema instance', async () => {
@@ -308,7 +305,10 @@ describe('end-to-end: f.custom + registerFieldRenderer + registerOp', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterBuilder, {
+      props: { filter },
+      global: { plugins: [dqlKit] },
+    })
 
     // 2. The registered renderer drives the value object through the UI.
     expect(wrapper.find('[data-testid="money-control"]').exists()).toBe(true)
@@ -333,10 +333,12 @@ describe('end-to-end: f.custom + registerFieldRenderer + registerOp', () => {
     const translator = createDrizzleTranslator({
       schema: moneySchema,
       columns: { price: moneyTable.priceAmount },
-    })
-    translator.registerOp('moneyEq', (col, value) => {
-      const v = value as { amount: number, currency: string }
-      return sql`${col} = ${v.amount} AND ${moneyTable.priceCurrency} = ${v.currency}`
+      ops: {
+        moneyEq: (col, value) => {
+          const v = value as { amount: number, currency: string }
+          return sql`${col} = ${v.amount} AND ${moneyTable.priceCurrency} = ${v.currency}`
+        },
+      },
     })
     const rows = await db.select().from(moneyTable).where(translator.toWhere(decoded.ast))
     expect(rows).toHaveLength(1)

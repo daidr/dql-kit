@@ -14,9 +14,12 @@ const isGroupNode = (n: ValidNode): n is Extract<ValidNode, { combinator: unknow
 export const createDrizzleTranslator = <S extends FilterSchema>(
   opts: CreateTranslatorOptions<S>,
 ): Translator => {
-  const ops: Record<string, OpTranslator> = { ...drizzleOps }
-  const columns: Record<string, AnyColumn> = {}
+  // Construction-time merge: built-in ops first, user `ops` override on
+  // top. Result is frozen-by-convention — there is no post-construction
+  // `registerOp`. Add custom ops via the `ops` option instead.
+  const ops: Record<string, OpTranslator> = { ...drizzleOps, ...(opts.ops ?? {}) }
 
+  const columns: Record<string, AnyColumn> = {}
   const explicit = (opts.columns ?? {}) as Record<string, AnyColumn | undefined>
   const table = ('table' in opts ? opts.table : undefined) as AnyDrizzleTable | undefined
 
@@ -52,7 +55,8 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
     const opFn = ops[node.op]
     if (!opFn) {
       throw new Error(
-        `[dql-kit/drizzle] No SQL translator registered for op "${node.op}". Use Translator.registerOp().`,
+        `[dql-kit/drizzle] No SQL translator registered for op "${node.op}". `
+          + `Pass it via createDrizzleTranslator({ ops: { ${node.op}: ... } }).`,
       )
     }
     const fieldDef = opts.schema.fields[node.field]
@@ -68,9 +72,6 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
     toWhere(ast: ValidAST): SQL {
       if (ast.children.length === 0) return sql`true`
       return translateNode(ast)
-    },
-    registerOp(name: string, translator: OpTranslator): void {
-      ops[name] = translator
     },
   }
 }

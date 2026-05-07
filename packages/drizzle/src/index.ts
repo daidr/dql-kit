@@ -4,6 +4,7 @@ export type {
   AnyDrizzleTable,
   ColumnMap,
   CreateTranslatorOptions,
+  OpMap,
   OpTranslator,
   Translator,
 } from './types.ts'
