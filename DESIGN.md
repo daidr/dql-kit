@@ -22,24 +22,51 @@ Three pillars:
 ## Package boundaries
 
 ```
-@dql-kit/core      ──► pure logic, zero deps beyond TS
-   ├── builder/    f.string, f.number, ..., f.custom
-   ├── ast/        types, validate, prune, flatten
-   ├── url/        toUrl, fromUrl, version sniffer
-   └── ops/        op metadata registry (no implementations)
+@dql-kit/core              ──► pure logic, zero deps beyond TS
+   ├── builder/            f.string, f.number, ..., f.custom (delegateTo)
+   ├── ast/                types, analyze, prune, validate, astEqual
+   ├── url/                toUrl, fromUrl, version sniffer
+   └── ops/                op metadata registry (no implementations)
 
-@dql-kit/drizzle   ──► peerDeps: @dql-kit/core, drizzle-orm
-   ├── translator  AST → SQL WHERE fragment
-   └── ops         op name → drizzle SQL builder
+@dql-kit/drizzle           ──► peerDeps: @dql-kit/core, drizzle-orm
+   ├── translator          AST → SQL WHERE fragment (immutable, ops-as-option)
+   └── ops                 op name → drizzle SQL builder (delegateTo-aware)
 
-@dql-kit/vue       ──► peerDeps: @dql-kit/core, vue
-   ├── composables useFilter()
-   ├── components  <FilterBuilder> (vertical-stack, popover-trigger)
-   └── renderers   built-in type renderers + registry
+@dql-kit/vue-headless      ──► peerDeps: @dql-kit/core, vue
+   ├── useFilter()         composable (analyze + astEqual + effectScope)
+   ├── createDqlKit()      Vue plugin (renderers / opLabels / unitLabels)
+   ├── UrlAdapter          generic URL sync contract (no router assumed)
+   └── createMemoryUrlAdapter  reference adapter for tests / no-router setups
+
+@dql-kit/vue-router-sync   ──► peerDeps: @dql-kit/vue-headless, vue-router
+   └── vueRouterUrlAdapter()   `UrlAdapter` backed by useRoute / useRouter
+
+@dql-kit/vue-ui            ──► peerDeps: @dql-kit/vue-headless, vue
+   ├── <FilterBuilder>     reference UI (vertical-stack, popover-trigger)
+   ├── built-in renderers  StringInput, NumberPairInput, IdAutocompleteInput, ...
+   ├── builtinRenderers    per-typeId catalogue with default + per-shape entries
+   └── resolveRenderer     (typeId, shape, { overrides, delegateTo })
 ```
 
 `@dql-kit/core` MUST NOT import any ORM, Vue, or Node-only API. It runs in
 browser, Node, edge runtimes alike.
+
+`@dql-kit/vue-headless` MUST NOT import `vue-router`. URL sync is opt-in via
+the `UrlAdapter` contract; vue-router integration lives in
+`@dql-kit/vue-router-sync` so apps without vue-router (Nuxt, Next-style
+file routing, hand-rolled history, no router at all) don't take the
+dependency.
+
+**No module-level shared state.** All registries (renderers, op labels,
+relative-unit labels) live on a `DqlKitInstance` created via
+`createDqlKit(...)` and provided through `app.use(...)`. Multiple Vue apps
+(SSR, microfrontends, Storybook) install their own instances without
+contaminating one another.
+
+**Core is language-neutral.** Built-in op labels default to the op key
+(`'eq'`, `'gt'`, ...). Localised labels are registered by the consuming
+app via `createDqlKit({ opLabels: { eq: '等于', ... } })`. dql-kit ships
+zero translated strings.
 
 ## Decisions (Q1–Q14)
 
