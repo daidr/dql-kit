@@ -744,6 +744,32 @@ describe('FilterBuilder — datetime inLast renderer', () => {
     await wrapper.find('[data-testid="inlast-amount"]').setValue('')
     expect(filter.valid.value.children).toHaveLength(0)
   })
+
+  it('selecting a unit before typing an amount preserves the unit choice on first keystroke', async () => {
+    // Regression: previously updateUnit returned without emitting when
+    // amount was null, and updateAmount fell back to the default 'day'
+    // — silently overwriting the unit the user had just clicked.
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inLast', value: undefined }],
+      },
+    })
+    const wrapper = mount(FilterBuilder, { props: { filter } })
+    await wrapper.find('[data-testid="inlast-unit"]').setValue('week')
+    // No emission yet (amount still missing).
+    expect(filter.valid.value.children).toHaveLength(0)
+    // First valid amount keystroke: unit should be 'week' (the user's
+    // pick), NOT 'day' (the renderer's internal default).
+    await wrapper.find('[data-testid="inlast-amount"]').setValue('3')
+    expect(filter.valid.value.children[0]).toEqual({
+      field: 'occurredAt',
+      op: 'inLast',
+      value: { amount: 3, unit: 'week' },
+    })
+  })
 })
 
 describe('FilterBuilder — id autocomplete renderer', () => {

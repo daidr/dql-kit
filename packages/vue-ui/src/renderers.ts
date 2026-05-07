@@ -1,6 +1,6 @@
-import { RELATIVE_UNITS, type FieldDef, type Label } from '@dql-kit/core'
+import { RELATIVE_UNITS, type FieldDef, type Label, type RelativeUnit } from '@dql-kit/core'
 import { filterInjectionKey, type LabelStatus } from '@dql-kit/vue-headless'
-import { computed, defineComponent, h, inject, ref, type Component, type PropType } from 'vue'
+import { computed, defineComponent, h, inject, ref, watch, type Component, type PropType } from 'vue'
 
 // `value` accepts any JSON-shaped condition value — string, number,
 // arrays, { amount, unit } objects for relative datetimes, etc. Using
@@ -544,21 +544,40 @@ export const DateTimeInLastInput = defineComponent({
   name: 'DqlDateTimeInLastInput',
   props: baseProps,
   setup(props) {
-    const current = computed<{ amount: number | null, unit: string }>(() => {
-      const v = props.value
-      if (
-        v != null
-        && typeof v === 'object'
-        && typeof (v as Record<string, unknown>).amount === 'number'
-        && typeof (v as Record<string, unknown>).unit === 'string'
-      ) {
-        const r = v as { amount: number, unit: string }
-        return {
-          amount: Number.isFinite(r.amount) ? r.amount : null,
-          unit: r.unit,
+    // Local unit selection — independent of props.value so the user's
+    // unit pick survives even before they've typed an amount. Without
+    // this, picking "week" before entering a number was silently lost
+    // (updateUnit could not emit because amount was null), and the
+    // first amount keystroke fell back to the default 'day'.
+    const localUnit = ref<RelativeUnit>('day')
+
+    // Sync localUnit from props.value whenever the bound condition is a
+    // valid relative-time object — covers initial mount, AST replay,
+    // op-swap-preserving-shape, etc.
+    watch(
+      () => props.value,
+      (v) => {
+        if (
+          v != null
+          && typeof v === 'object'
+          && typeof (v as Record<string, unknown>).unit === 'string'
+        ) {
+          const u = (v as { unit: string }).unit
+          if ((RELATIVE_UNITS as readonly string[]).includes(u)) {
+            localUnit.value = u as RelativeUnit
+          }
         }
+      },
+      { immediate: true },
+    )
+
+    const amount = computed<number | null>(() => {
+      const v = props.value
+      if (v != null && typeof v === 'object') {
+        const a = (v as Record<string, unknown>).amount
+        return typeof a === 'number' && Number.isFinite(a) ? a : null
       }
-      return { amount: null, unit: 'day' }
+      return null
     })
 
     const updateAmount = (raw: string) => {
@@ -568,15 +587,18 @@ export const DateTimeInLastInput = defineComponent({
       }
       const n = Number(raw)
       if (!Number.isFinite(n)) return
-      props.onUpdate({ amount: n, unit: current.value.unit })
+      props.onUpdate({ amount: n, unit: localUnit.value })
     }
 
     const updateUnit = (unit: string) => {
-      const a = current.value.amount
-      // No partial emission: leave the existing value untouched until the
-      // amount input is also valid, so prune doesn't see a mid-edit shape.
-      if (a === null) return
-      props.onUpdate({ amount: a, unit })
+      if (!(RELATIVE_UNITS as readonly string[]).includes(unit)) return
+      localUnit.value = unit as RelativeUnit
+      const a = amount.value
+      // Only emit when amount is also valid; otherwise the partial
+      // {amount: null, unit} would fail prune's relative-shape check.
+      // The local ref keeps the unit selection so the first valid
+      // amount keystroke uses it.
+      if (a !== null) props.onUpdate({ amount: a, unit })
     }
 
     return () =>
@@ -589,7 +611,7 @@ export const DateTimeInLastInput = defineComponent({
             min: '1',
             class: 'dql-inlast-amount',
             'data-testid': 'inlast-amount',
-            value: current.value.amount === null ? '' : current.value.amount,
+            value: amount.value === null ? '' : amount.value,
             onInput: (e: Event) => updateAmount((e.target as HTMLInputElement).value),
           }),
           h(
@@ -597,7 +619,7 @@ export const DateTimeInLastInput = defineComponent({
             {
               class: 'dql-inlast-unit',
               'data-testid': 'inlast-unit',
-              value: current.value.unit,
+              value: localUnit.value,
               onChange: (e: Event) => updateUnit((e.target as HTMLSelectElement).value),
             },
             RELATIVE_UNITS.map((u) =>
