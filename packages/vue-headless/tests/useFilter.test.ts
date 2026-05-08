@@ -137,6 +137,60 @@ describe('useFilter — actions', () => {
     filter.actions.setCombinator([], 'or')
     expect(filter.draft.value.combinator).toBe('or')
   })
+
+  it('wrapGroup at root wraps existing children behind an empty condition', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.setCombinator([], 'or')
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'a' })
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'b' })
+
+    filter.actions.wrapGroup([])
+
+    // Outer combinator defaults to the inverse of the wrapped group.
+    expect(filter.draft.value.combinator).toBe('and')
+    expect(filter.draft.value.children).toHaveLength(2)
+
+    const empty = filter.draft.value.children[0] as { field: string | null, op: string | null }
+    expect(empty).toEqual({ field: null, op: null })
+
+    const inner = filter.draft.value.children[1] as { combinator: string, children: unknown[] }
+    expect(inner.combinator).toBe('or')
+    expect(inner.children).toEqual([
+      { field: 'title', op: 'eq', value: 'a' },
+      { field: 'title', op: 'eq', value: 'b' },
+    ])
+  })
+
+  it('wrapGroup at a nested path replaces only that subtree', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addGroup([], 'or')
+    filter.actions.addCondition([0], { field: 'title', op: 'eq', value: 'a' })
+    filter.actions.addCondition([0], { field: 'title', op: 'eq', value: 'b' })
+    filter.actions.addCondition([], { field: 'rating', op: 'eq', value: 1 })
+
+    filter.actions.wrapGroup([0])
+
+    // Root combinator stays 'and'; root[1] (the rating condition) is untouched.
+    expect(filter.draft.value.combinator).toBe('and')
+    expect(filter.draft.value.children).toHaveLength(2)
+    expect(filter.draft.value.children[1]).toEqual({ field: 'rating', op: 'eq', value: 1 })
+
+    const wrapped = filter.draft.value.children[0] as { combinator: string, children: unknown[] }
+    expect(wrapped.combinator).toBe('and')
+    expect((wrapped.children[0] as { field: unknown }).field).toBeNull()
+    const inner = wrapped.children[1] as { combinator: string, children: unknown[] }
+    expect(inner.combinator).toBe('or')
+    expect(inner.children).toHaveLength(2)
+  })
+
+  it('wrapGroup honours an explicit outerCombinator', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: 'a' })
+    filter.actions.wrapGroup([], { outerCombinator: 'and' })
+    // Inner is the default 'and'; explicit outer also 'and'. No defaulting
+    // to inverse — user picked 'and'.
+    expect(filter.draft.value.combinator).toBe('and')
+  })
 })
 
 describe('useFilter — applyAst / toJSON', () => {

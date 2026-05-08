@@ -98,6 +98,21 @@ export type FilterActions = {
   updateNode: (path: number[], partial: Partial<{ field: string, op: string, value: unknown }>) => void
   addGroup: (parentPath: number[], combinator?: 'and' | 'or') => void
   setCombinator: (path: number[], combinator: 'and' | 'or') => void
+  /**
+   * Wrap the group at `path` into a fresh outer group, prepended with an
+   * empty condition. Result at `path` becomes
+   *   { combinator: outer, children: [emptyCondition, originalGroup] }
+   * where the original group keeps its combinator and children intact.
+   *
+   * `outerCombinator` defaults to the inverse of the wrapped group's
+   * combinator — that's the case where wrapping changes precedence
+   * (e.g. `(A OR B OR C) AND newCondition`); using the same combinator
+   * collapses to the flat shape the caller could already build with
+   * `addCondition`, so the inverse is the meaningful default.
+   *
+   * Root path `[]` is supported: the root group itself is wrapped.
+   */
+  wrapGroup: (path: number[], options?: { outerCombinator?: 'and' | 'or' }) => void
   clear: () => void
 }
 

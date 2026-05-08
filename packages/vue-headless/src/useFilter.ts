@@ -337,6 +337,35 @@ export const useFilter = <S extends FilterSchema>(
         ;(node as DraftGroup).combinator = combinator
       })
     },
+    wrapGroup(path, options) {
+      mutate((d) => {
+        const target = path.length === 0 ? d : navigate(d, path)
+        if (!target || !isGroup(target)) return
+        const inner = target as DraftGroup
+        const outerCombinator =
+          options?.outerCombinator ?? (inner.combinator === 'and' ? 'or' : 'and')
+        const empty: DraftCondition = { field: null, op: null }
+        // Snapshot inner, then build the wrapper. Re-using `inner` directly
+        // as a child is safe (it's about to be replaced as the node at
+        // `path`), but cloneDraft keeps the "outer.children[1] is a fresh
+        // object" invariant matching the rest of the action surface.
+        const innerClone: DraftGroup = {
+          combinator: inner.combinator,
+          children: inner.children,
+        }
+        if (path.length === 0) {
+          d.combinator = outerCombinator
+          d.children = [empty, innerClone]
+          return
+        }
+        const located = navigateParent(d, path)
+        if (!located) return
+        located.parent.children[located.index] = {
+          combinator: outerCombinator,
+          children: [empty, innerClone],
+        }
+      })
+    },
     clear() {
       draft.value = emptyDraft()
     },
