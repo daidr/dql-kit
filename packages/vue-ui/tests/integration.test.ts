@@ -181,8 +181,8 @@ describe('end-to-end: nested filter via actions → URL → pglite', () => {
       },
     })
     const wrapper = mount(FilterPanel, { props: { filter } })
-    // Two groups: root + nested. Two combinator selects.
-    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(2)
+    // Two groups: root + nested. Two combinator toggles.
+    expect(wrapper.findAll('[data-testid="combinator-toggle"]')).toHaveLength(2)
     expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(true)
   })
 })

@@ -91,7 +91,8 @@ const fallbackRenderer = (typeId: string) => {
     // eslint-disable-next-line no-console
     console.warn(
       `[dql-kit/vue-ui] No renderer registered for typeId="${typeId}". `
-        + `Falling back to StringInput.`,
+        + `Falling back to StringInput. Register one via `
+        + `createDqlKit({ renderers: { "${typeId}": YourComponent } }).`,
     )
   }
   return StringInput

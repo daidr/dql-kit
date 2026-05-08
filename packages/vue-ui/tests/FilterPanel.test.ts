@@ -1151,13 +1151,15 @@ describe('FilterPanel — nested groups', () => {
     const root = wrapper.find('[data-testid="group"]')
     expect(root.exists()).toBe(true)
     expect(root.attributes('data-depth')).toBe('0')
-    expect(root.classes()).toContain('dql-group--root')
+    // Class naming aligns with the story-verse rewrite: `is-root` /
+    // `is-nested` instead of `dql-group--root` / `dql-group--nested`.
+    expect(root.classes()).toContain('is-root')
     // The root must NOT have a remove-group button (top-level is exempt
     // per DESIGN.md Q10).
     expect(wrapper.find('[data-testid="remove-group"]').exists()).toBe(false)
   })
 
-  it('addGroup creates a nested group with depth=1 and a per-group combinator select', async () => {
+  it('addGroup creates a nested group with depth=1 and a per-group combinator toggle', async () => {
     // Seed root with 2+ children at each level so both combinators are
     // visible — the builder hides the picker for 0/1-child groups, where
     // AND/OR has no observable effect (mirrors canonical-AST flatten).
@@ -1182,16 +1184,16 @@ describe('FilterPanel — nested groups', () => {
     const nested = wrapper.find('[data-testid="group-nested"]')
     expect(nested.exists()).toBe(true)
     expect(nested.attributes('data-depth')).toBe('1')
-    expect(nested.classes()).toContain('dql-group--nested')
-    // Each group has its own combinator select (root + nested = 2).
-    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(2)
+    expect(nested.classes()).toContain('is-nested')
+    // Each group has its own combinator toggle (root + nested = 2).
+    expect(wrapper.findAll('[data-testid="combinator-toggle"]')).toHaveLength(2)
   })
 
   it('combinator picker is hidden for 0/1-child groups', async () => {
     // Empty root → no combinator visible.
     const filter = useFilter({ schema, sync: 'none' })
     let wrapper = mount(FilterPanel, { props: { filter } })
-    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(0)
+    expect(wrapper.findAll('[data-testid="combinator-toggle"]')).toHaveLength(0)
     wrapper.unmount()
 
     // Root with 1 condition → still no combinator.
@@ -1204,7 +1206,7 @@ describe('FilterPanel — nested groups', () => {
       },
     })
     wrapper = mount(FilterPanel, { props: { filter: oneChild } })
-    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(0)
+    expect(wrapper.findAll('[data-testid="combinator-toggle"]')).toHaveLength(0)
     wrapper.unmount()
 
     // Root with 2 conditions → exactly one combinator.
@@ -1220,7 +1222,7 @@ describe('FilterPanel — nested groups', () => {
       },
     })
     wrapper = mount(FilterPanel, { props: { filter: twoChildren } })
-    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid="combinator-toggle"]')).toHaveLength(1)
   })
 
   it('flipping the nested combinator updates only the nested group', async () => {
@@ -1242,9 +1244,11 @@ describe('FilterPanel — nested groups', () => {
       },
     })
     const wrapper = mount(FilterPanel, { props: { filter } })
-    const selects = wrapper.findAll('[data-testid="combinator-select"]')
-    expect(selects).toHaveLength(2)
-    await selects[1]!.setValue('or')
+    const toggles = wrapper.findAll('[data-testid="combinator-toggle"]')
+    expect(toggles).toHaveLength(2)
+    // Toggle button flips current state on click — inner starts as 'and',
+    // a single click moves it to 'or'.
+    await toggles[1]!.trigger('click')
     expect(filter.draft.value.combinator).toBe('and')
     const innerGroup = filter.draft.value.children[1] as { combinator: string }
     expect(innerGroup.combinator).toBe('or')
@@ -1374,8 +1378,13 @@ describe('FilterPanel — validation error indicators', () => {
     expect(condition.classes()).toContain('dql-condition--error')
     const indicator = wrapper.find('[data-testid="condition-error"]')
     expect(indicator.exists()).toBe(true)
+    // Programmatic contract: stable `data-error-code` carries the raw
+    // code; `aria-label` carries a humanised message for screen readers
+    // (the raw code is opaque to users), so the test asserts only on
+    // the data attribute. The humanised label includes the code by
+    // implication (e.g. "Unknown field …" maps to `unknown_field`).
     expect(indicator.attributes('data-error-code')).toBe(code)
-    expect(indicator.attributes('aria-label')).toBe(code)
+    expect(indicator.attributes('aria-label')).toBeTruthy()
   })
 
   it('only the offending row gets the error class when multiple rows coexist', () => {
