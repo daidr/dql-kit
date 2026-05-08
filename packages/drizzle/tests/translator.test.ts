@@ -817,6 +817,98 @@ describe('createDrizzleTranslator — inLast (relative shape)', () => {
   })
 })
 
+// Slice 6b: same coverage but on `timestamp(...)` columns built with the
+// default `mode: 'date'`, which sets `mapToDriverValue = v => v.toISOString()`.
+// AST values arrive as ISO strings (that's what `checkPrimitive` validates),
+// so the ops layer must coerce string → Date before binding or PG drizzle
+// crashes with "value.toISOString is not a function". This locks the bug fix.
+const eventsDateMode = pgTable('events_date_mode', {
+  id: serial('id').primaryKey(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at').notNull(),
+})
+
+describe('createDrizzleTranslator — datetime against mode:date columns', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE events_date_mode (
+        id SERIAL PRIMARY KEY,
+        occurred_at TIMESTAMPTZ NOT NULL,
+        created_at  TIMESTAMP   NOT NULL
+      );
+    `)
+    await client.exec(`
+      INSERT INTO events_date_mode (occurred_at, created_at) VALUES
+        ('2026-01-01T00:00:00Z', '2026-01-01 00:00:00'),
+        ('2026-05-01T08:00:00Z', '2026-05-01 08:00:00'),
+        ('2026-05-15T12:30:00Z', '2026-05-15 12:30:00'),
+        ('2026-06-01T23:59:59Z', '2026-06-01 23:59:59');
+    `)
+  })
+
+  const dtSchema = defineFilterSchema({
+    fields: {
+      occurredAt: f.datetime(),
+      createdAt: f.datetime(),
+    },
+  })
+
+  test('before with ISO string does not crash on mode:date column', async () => {
+    const t = createDrizzleTranslator({ schema: dtSchema, table: eventsDateMode })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'before', value: '2026-05-15T00:00:00.000Z' }],
+    }
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+  })
+
+  test('between with two ISO strings does not crash on mode:date column', async () => {
+    const t = createDrizzleTranslator({ schema: dtSchema, table: eventsDateMode })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [
+        {
+          field: 'occurredAt',
+          op: 'between',
+          value: ['2026-05-01T00:00:00.000Z', '2026-05-31T23:59:59.000Z'],
+        },
+      ],
+    }
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+  })
+
+  test('eq with ISO string does not crash on mode:date column', async () => {
+    const t = createDrizzleTranslator({ schema: dtSchema, table: eventsDateMode })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'occurredAt', op: 'eq', value: '2026-05-01T08:00:00.000Z' }],
+    }
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    expect(rows).toHaveLength(1)
+  })
+
+  test('in with ISO strings does not crash on mode:date column', async () => {
+    const t = createDrizzleTranslator({ schema: dtSchema, table: eventsDateMode })
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{
+        field: 'occurredAt',
+        op: 'in',
+        value: ['2026-05-01T08:00:00.000Z', '2026-05-15T12:30:00.000Z'],
+      }],
+    }
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    expect(rows).toHaveLength(2)
+  })
+})
+
 // Slice 7: id<T> field SQL coverage. The id field carries no DB-specific
 // semantics — it's eq/neq/in/notIn just like a primitive — but we want a
 // pglite roundtrip to lock in that the integer-FK use case (the most common

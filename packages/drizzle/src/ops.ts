@@ -30,6 +30,33 @@ const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`)
 const effectiveTypeId = (field: FieldDef): string =>
   field.delegateTo ?? field.typeId
 
+// For date/datetime fields the AST carries an ISO string (that's what
+// `checkPrimitive` validates), but drizzle's default `timestamp()` /
+// `date()` columns are `mode: 'date'` and call `value.toISOString()` in
+// `mapToDriverValue` — passing a string crashes with
+// "value.toISOString is not a function". Coerce here so both `mode: 'date'`
+// (needs Date) and `mode: 'string'` (identity passthrough; pg serialises
+// Date to ISO) work transparently. Element type drives coercion for
+// arrays, so `in` / `notIn` over a date field also coerce per-element.
+const dateElementTypeId = (field: FieldDef): string => {
+  const inner = field.typeId === 'array' && field.itemType ? field.itemType : field
+  return inner.delegateTo ?? inner.typeId
+}
+const isDateValuedField = (field: FieldDef): boolean => {
+  const t = dateElementTypeId(field)
+  return t === 'date' || t === 'datetime'
+}
+const coerceDateScalar = (v: unknown): unknown => {
+  if (typeof v !== 'string') return v
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? v : d
+}
+const coerceDateValue = (field: FieldDef, v: unknown): unknown => {
+  if (!isDateValuedField(field)) return v
+  if (Array.isArray(v)) return v.map(coerceDateScalar)
+  return coerceDateScalar(v)
+}
+
 // Some ops share an op name across very different SQL semantics — `contains`
 // is ILIKE for string fields but `= ANY(col)` for PG array fields, and
 // `isEmpty` is `IS NULL OR = ''` for strings vs `cardinality(col) = 0` for
@@ -38,8 +65,8 @@ const effectiveTypeId = (field: FieldDef): string =>
 // The op translator branches on the effective typeId via the OpContext.
 
 export const drizzleOps: Record<string, OpTranslator> = {
-  eq:           (col, v) => eq(col, v as never),
-  neq:          (col, v) => ne(col, v as never),
+  eq:           (col, v, ctx) => eq(col, coerceDateValue(ctx.field, v) as never),
+  neq:          (col, v, ctx) => ne(col, coerceDateValue(ctx.field, v) as never),
   contains:     (col, v, ctx) => {
     if (effectiveTypeId(ctx.field) === 'array') {
       // PG: scalar = ANY(array_column)
@@ -74,18 +101,18 @@ export const drizzleOps: Record<string, OpTranslator> = {
     }
     return andSql(isNotNull(col), ne(col as AnyColumn, '' as never))!
   },
-  in:           (col, v) => inArray(col, v as never[]),
-  notIn:        (col, v) => notInArray(col, v as never[]),
-  gt:           (col, v) => gt(col, v as never),
-  gte:          (col, v) => gte(col, v as never),
-  lt:           (col, v) => lt(col, v as never),
-  lte:          (col, v) => lte(col, v as never),
-  between:      (col, v) => {
-    const [a, b] = v as [unknown, unknown]
+  in:           (col, v, ctx) => inArray(col, coerceDateValue(ctx.field, v) as never[]),
+  notIn:        (col, v, ctx) => notInArray(col, coerceDateValue(ctx.field, v) as never[]),
+  gt:           (col, v, ctx) => gt(col, coerceDateValue(ctx.field, v) as never),
+  gte:          (col, v, ctx) => gte(col, coerceDateValue(ctx.field, v) as never),
+  lt:           (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
+  lte:          (col, v, ctx) => lte(col, coerceDateValue(ctx.field, v) as never),
+  between:      (col, v, ctx) => {
+    const [a, b] = coerceDateValue(ctx.field, v) as [unknown, unknown]
     return between(col, a as never, b as never)
   },
-  before:       (col, v) => lt(col, v as never),
-  after:        (col, v) => gt(col, v as never),
+  before:       (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
+  after:        (col, v, ctx) => gt(col, coerceDateValue(ctx.field, v) as never),
   inLast:       (col, v) => {
     // Defence-in-depth: core/check.ts already rejects anything outside the
     // documented unit set, but `unit` is interpolated into sql.raw so we
