@@ -1,6 +1,13 @@
 import { f, defineFilterSchema } from '@dql-kit/core'
 import type { FieldDef, FilterSchema, IdFetcher, Item } from '@dql-kit/core'
 
+/**
+ * Demo `id` fields can pick which mock pool the fetcher draws from.
+ * Default is `'authors'` for back-compat; new pools (articles, tags,
+ * etc.) plug in via `MOCK_POOLS` below.
+ */
+export type IdPoolKey = 'authors' | 'articles'
+
 export type FieldSpec =
   | { type: 'string', label?: string, group?: string }
   | { type: 'number', label?: string, group?: string }
@@ -13,7 +20,7 @@ export type FieldSpec =
     }
   | { type: 'date', label?: string, group?: string }
   | { type: 'datetime', label?: string, group?: string }
-  | { type: 'id', label?: string, group?: string }
+  | { type: 'id', label?: string, group?: string, pool?: IdPoolKey }
   | {
       type: 'array'
       itemType: 'string' | 'number'
@@ -38,6 +45,24 @@ const MOCK_AUTHORS: Item<number>[] = [
   { id: 7, label: 'Grace'   },
   { id: 8, label: 'Heidi'   },
 ]
+
+const MOCK_ARTICLES: Item<number>[] = [
+  { id: 101, label: 'Vue 3 Composition API 实战' },
+  { id: 102, label: 'TypeScript 类型体操入门' },
+  { id: 103, label: '前端性能优化十讲' },
+  { id: 104, label: 'Reactive 模式深度解析' },
+  { id: 105, label: 'CSS Grid vs Flexbox 选择指南' },
+  { id: 106, label: '微前端架构演进史' },
+  { id: 107, label: 'WebAssembly 入门到精通' },
+  { id: 108, label: 'GraphQL 与 REST 对比' },
+  { id: 109, label: '从零搭建一个设计系统' },
+  { id: 110, label: '边缘函数实战指南' },
+]
+
+const MOCK_POOLS: Record<IdPoolKey, Item<number>[]> = {
+  authors:  MOCK_AUTHORS,
+  articles: MOCK_ARTICLES,
+}
 
 const wait = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -109,7 +134,8 @@ export const buildFetcherMap = (
   const map: Record<string, IdFetcher<number>> = {}
   for (const [key, fieldSpec] of Object.entries(spec.fields)) {
     if (fieldSpec.type === 'id') {
-      map[key] = mockIdFetcher()
+      const pool = MOCK_POOLS[fieldSpec.pool ?? 'authors']
+      map[key] = mockIdFetcher(pool)
     }
   }
   return map
@@ -117,16 +143,18 @@ export const buildFetcherMap = (
 
 export const defaultSpec: SchemaSpec = {
   fields: {
-    title:       { type: 'string',  label: '标题',  group: 'basic' },
-    status:      { type: 'enum',    label: '状态',  group: 'basic', values: ['draft', 'published', 'archived'] },
-    views:       { type: 'number',  label: '阅读数', group: 'basic' },
-    isPinned:    { type: 'boolean', label: '置顶' },
-    authorId:    { type: 'id',      label: '作者' },
-    publishedAt: { type: 'datetime', label: '发布时间', group: 'time' },
-    tags:        { type: 'array',   label: '标签', itemType: 'string' },
+    title:            { type: 'string',  label: '标题',     group: 'basic' },
+    status:           { type: 'enum',    label: '状态',     group: 'basic', values: ['draft', 'published', 'archived'] },
+    views:            { type: 'number',  label: '阅读数',   group: 'basic' },
+    isPinned:         { type: 'boolean', label: '置顶' },
+    authorId:         { type: 'id',      label: '作者',     pool: 'authors' },
+    relatedArticleId: { type: 'id',      label: '关联文章', pool: 'articles', group: 'relations' },
+    publishedAt:      { type: 'datetime', label: '发布时间', group: 'time' },
+    tags:             { type: 'array',   label: '标签',     itemType: 'string' },
   },
   groups: {
-    basic: { label: '基本' },
-    time:  { label: '时间' },
+    basic:     { label: '基本' },
+    relations: { label: '关系' },
+    time:      { label: '时间' },
   },
 }

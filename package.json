@@ -11,7 +11,7 @@
     "test": "bun run --workspaces test"
   },
   "devDependencies": {
-    "typescript": "^5.5.0"
+    "typescript": "^6.0.0"
   },
   "engines": {
     "bun": ">=1.1.0"

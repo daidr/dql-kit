@@ -33,12 +33,12 @@
   },
   "devDependencies": {
     "@dql-kit/drizzle": "workspace:*",
-    "@electric-sql/pglite": "^0.2.17",
+    "@electric-sql/pglite": "^0.4.0",
     "@vue/test-utils": "^2.4.6",
-    "drizzle-orm": "^0.36.0",
-    "jsdom": "^25.0.0",
-    "typescript": "^5.5.0",
-    "vitest": "^2.1.0",
+    "drizzle-orm": "^0.45.0",
+    "jsdom": "^29.0.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.0.0",
     "vue": "^3.5.0"
   }
 }

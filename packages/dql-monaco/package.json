@@ -1,0 +1,33 @@
+{
+  "name": "@dql-kit/dql-monaco",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": {
+        "types": "./src/index.ts",
+        "import": "./src/index.ts"
+      },
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["src", "dist"],
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target browser --format esm --external 'monaco-editor' --external '@dql-kit/*' && tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "@dql-kit/dql": "workspace:*",
+    "monaco-editor": "^0.55.0"
+  },
+  "devDependencies": {
+    "@dql-kit/core": "workspace:*",
+    "@dql-kit/dql": "workspace:*",
+    "monaco-editor": "^0.55.0",
+    "typescript": "^6.0.0"
+  }
+}

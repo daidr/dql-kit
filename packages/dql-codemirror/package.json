@@ -1,0 +1,43 @@
+{
+  "name": "@dql-kit/dql-codemirror",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": {
+        "types": "./src/index.ts",
+        "import": "./src/index.ts"
+      },
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["src", "dist"],
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target browser --format esm --external '@codemirror/*' --external '@lezer/*' --external '@dql-kit/*' && tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "@dql-kit/dql": "workspace:*",
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/autocomplete": "^6.0.0",
+    "@codemirror/lint": "^6.0.0",
+    "@lezer/highlight": "^1.0.0"
+  },
+  "devDependencies": {
+    "@dql-kit/core": "workspace:*",
+    "@dql-kit/dql": "workspace:*",
+    "@codemirror/state": "^6.4.1",
+    "@codemirror/view": "^6.34.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/lint": "^6.8.0",
+    "@lezer/highlight": "^1.2.0",
+    "typescript": "^6.0.0"
+  }
+}

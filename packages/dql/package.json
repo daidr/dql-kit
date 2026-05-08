@@ -1,0 +1,30 @@
+{
+  "name": "@dql-kit/dql",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": {
+        "types": "./src/index.ts",
+        "import": "./src/index.ts"
+      },
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["src", "dist"],
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target browser --format esm && tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "@dql-kit/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@dql-kit/core": "workspace:*",
+    "typescript": "^6.0.0"
+  }
+}
