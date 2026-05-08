@@ -1,0 +1,795 @@
+/*
+ * @dql-kit/vue-ui — opt-in stylesheet
+ *
+ * Not auto-imported. Consumers wire it up explicitly:
+ *
+ *   import '@dql-kit/vue-ui/styles.css'
+ *
+ * Design language follows the dashboard reference UI: light neutral palette,
+ * 1.5px ring borders, rounded radii, soft shadows. Everything is keyed off
+ * CSS custom properties so apps can override the look without forking.
+ */
+
+.dql-filter-panel,
+.dql-filter-button {
+  --dql-radius-sm: 6px;
+  --dql-radius-md: 8px;
+  --dql-radius-lg: 12px;
+  --dql-radius-xl: 16px;
+
+  --dql-border: #e5e7eb;
+  --dql-border-strong: #d1d5db;
+  --dql-border-soft: #f3f4f6;
+
+  --dql-surface: #ffffff;
+  --dql-surface-soft: #f9fafb;
+  --dql-surface-muted: rgba(249, 250, 251, 0.5);
+
+  --dql-text: #111827;
+  --dql-text-strong: #1f2937;
+  --dql-text-muted: #6b7280;
+  --dql-text-faint: #9ca3af;
+
+  --dql-accent: #3b82f6;
+  --dql-accent-soft: rgba(59, 130, 246, 0.12);
+
+  --dql-danger: #dc2626;
+  --dql-danger-soft: #fef2f2;
+  --dql-danger-border: #fecaca;
+
+  --dql-warn: #d97706;
+  --dql-warn-soft: #fffbeb;
+  --dql-warn-border: #fde68a;
+  --dql-warn-text: #92400e;
+
+  --dql-shadow-md: 0 4px 12px -4px rgba(0, 0, 0, 0.08);
+  --dql-shadow-lg: 0 10px 40px -8px rgba(0, 0, 0, 0.12),
+    0 4px 12px -4px rgba(0, 0, 0, 0.08);
+
+  --dql-ring: 0 0 0 1.5px var(--dql-border);
+  --dql-ring-strong: 0 0 0 1.5px var(--dql-border-strong);
+  --dql-ring-accent: 0 0 0 2px var(--dql-accent-soft);
+
+  --dql-control-h: 28px;
+  --dql-control-h-md: 32px;
+  --dql-control-h-lg: 36px;
+
+  --dql-font-size: 13px;
+  --dql-font-size-sm: 12px;
+  --dql-font-size-xs: 11px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dql-filter-panel,
+.dql-filter-button {
+    --dql-border: #2a2f3b;
+    --dql-border-strong: #353b4a;
+    --dql-border-soft: #1a1d24;
+
+    --dql-surface: #181b22;
+    --dql-surface-soft: #11141a;
+    --dql-surface-muted: rgba(17, 20, 26, 0.5);
+
+    --dql-text: #e8eaf2;
+    --dql-text-strong: #f3f4f6;
+    --dql-text-muted: #9ca3af;
+    --dql-text-faint: #6b7280;
+
+    --dql-accent: #6d80ff;
+    --dql-accent-soft: rgba(109, 128, 255, 0.18);
+
+    --dql-danger: #f87171;
+    --dql-danger-soft: rgba(248, 113, 113, 0.12);
+    --dql-danger-border: rgba(248, 113, 113, 0.3);
+
+    --dql-warn: #f5c25b;
+    --dql-warn-soft: rgba(245, 194, 91, 0.12);
+    --dql-warn-border: rgba(245, 194, 91, 0.3);
+    --dql-warn-text: #fbbf24;
+
+    --dql-shadow-md: 0 4px 12px -4px rgba(0, 0, 0, 0.4);
+    --dql-shadow-lg: 0 10px 40px -8px rgba(0, 0, 0, 0.5),
+      0 4px 12px -4px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* ==========================================================================
+   FilterPanel root
+   ========================================================================== */
+
+.dql-filter-panel {
+  font-size: var(--dql-font-size);
+  color: var(--dql-text);
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ==========================================================================
+   FilterButton — default render
+
+   The button is intentionally compact and host-styled-friendly: a single
+   pill with optional warning indicator. It owns no popover state — wire
+   `@click` from the host to drive whatever visibility mechanism you
+   want (popover, dialog, drawer, …).
+   ========================================================================== */
+
+.dql-filter-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: var(--dql-control-h-lg);
+  font: inherit;
+  font-size: var(--dql-font-size);
+  color: var(--dql-text-strong);
+  background: var(--dql-surface);
+  border: none;
+  border-radius: var(--dql-radius-lg);
+  box-shadow: var(--dql-ring);
+  cursor: pointer;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dql-filter-button:hover {
+  background: var(--dql-surface-soft);
+  box-shadow: var(--dql-ring-strong);
+}
+.dql-filter-button--active {
+  color: var(--dql-text-strong);
+}
+.dql-filter-button--has-notices {
+  /* hook only — the indicator dot owns its own styling. Hosts that
+     want to tint the whole button can target this modifier. */
+}
+
+.dql-filter-button__notice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: var(--dql-font-size-xs);
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 999px;
+  background: var(--dql-warn-soft);
+  color: var(--dql-warn-text);
+}
+
+.dql-filter-button__label {
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Group (recursive container)
+
+   Layout mirrors the dashboard reference UI:
+
+     ┌────────────┬───────────────────────────────────┬────────────┐
+     │ combinator │ body                              │ remove ×   │
+     │ (vert.     │   ├─ child rows                   │ (vert.     │
+     │  centered) │   ├─ nested groups                │  centered) │
+     │            │   └─ add buttons                  │            │
+     └────────────┴───────────────────────────────────┴────────────┘
+
+   The combinator column collapses (display:none via missing element)
+   when the group has 0 or 1 children — AND/OR has no observable
+   effect there, matching the canonical-AST flatten rule. The remove
+   column is omitted on the root group.
+   ========================================================================== */
+
+.dql-group {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.dql-group__combinator {
+  flex-shrink: 0;
+  width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.dql-group__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--dql-radius-lg);
+  background: var(--dql-surface-muted);
+  box-shadow: var(--dql-ring);
+}
+
+.dql-group__remove-col {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.dql-group--root > .dql-group__body {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.dql-combinator-select {
+  width: 100%;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  height: var(--dql-control-h);
+  padding: 0 24px 0 10px;
+  border: none;
+  border-radius: var(--dql-radius-md);
+  background-color: var(--dql-surface);
+  background-image: linear-gradient(45deg, transparent 50%, var(--dql-text-muted) 50%),
+    linear-gradient(135deg, var(--dql-text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 12px) 50%,
+    calc(100% - 7px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--dql-text-strong);
+  box-shadow: var(--dql-ring);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: center;
+  text-align-last: center;
+}
+.dql-combinator-select:hover,
+.dql-combinator-select:focus {
+  box-shadow: var(--dql-ring-strong);
+  outline: none;
+}
+
+/* ==========================================================================
+   Condition row (field | op | value | error | remove)
+   ========================================================================== */
+
+.dql-condition {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.dql-condition--error .dql-error-indicator {
+  /* the indicator already has its own warn styling; keep this hook
+     available for hosts that want to tint the whole row. */
+}
+
+.dql-condition__value {
+  flex: 1;
+  min-width: 120px;
+  position: relative;
+}
+/* Ops with valueShape: 'none' (isEmpty / notEmpty) render no input —
+   collapse the cell so the field/op selects don't share its space. */
+.dql-condition__value:empty {
+  display: none;
+}
+
+.dql-field-select,
+.dql-op-select {
+  flex-shrink: 0;
+  width: 132px;
+  height: var(--dql-control-h);
+  padding: 0 24px 0 8px;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-text-strong);
+  background-color: var(--dql-surface);
+  background-image: linear-gradient(45deg, transparent 50%, var(--dql-text-muted) 50%),
+    linear-gradient(135deg, var(--dql-text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 12px) 50%,
+    calc(100% - 7px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  outline: none;
+}
+.dql-field-select:hover,
+.dql-op-select:hover,
+.dql-field-select:focus,
+.dql-op-select:focus {
+  border-color: var(--dql-border-strong);
+}
+
+.dql-error-indicator {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: var(--dql-font-size-xs);
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--dql-warn-soft);
+  color: var(--dql-warn-text);
+  cursor: help;
+}
+
+/* Remove buttons (per-condition × and per-group ×) */
+.dql-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  border: none;
+  border-radius: var(--dql-radius-sm);
+  background: transparent;
+  color: var(--dql-text-faint);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dql-remove:hover {
+  background: var(--dql-danger-soft);
+  color: var(--dql-danger);
+}
+
+/* Group-level × is rendered inside .dql-group__remove-col, so it
+   doesn't share the inline auto-margin trick the per-condition × used. */
+.dql-remove-group {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--dql-radius-md);
+}
+
+/* Add buttons live in their own row under the children block. */
+.dql-group__add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.dql-add-condition,
+.dql-add-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--dql-control-h);
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--dql-font-size-xs);
+  border: none;
+  border-radius: var(--dql-radius-md);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.dql-add-condition {
+  background: var(--dql-surface);
+  color: var(--dql-text-strong);
+  box-shadow: var(--dql-ring);
+}
+.dql-add-condition:hover {
+  background: var(--dql-surface-soft);
+  box-shadow: var(--dql-ring-strong);
+}
+.dql-add-group {
+  background: transparent;
+  color: var(--dql-text-muted);
+  box-shadow: var(--dql-ring);
+}
+.dql-add-group:hover {
+  background: var(--dql-surface-soft);
+  color: var(--dql-text-strong);
+  box-shadow: var(--dql-ring-strong);
+}
+
+/* ==========================================================================
+   Dropped-notice banner
+   ========================================================================== */
+
+.dql-dropped-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--dql-warn-soft);
+  border: 1px solid var(--dql-warn-border);
+  border-radius: var(--dql-radius-md);
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-warn-text);
+}
+.dql-dropped-message {
+  flex: 1;
+}
+.dql-dropped-dismiss {
+  flex-shrink: 0;
+  height: var(--dql-control-h);
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--dql-font-size-xs);
+  border: none;
+  border-radius: var(--dql-radius-sm);
+  background: var(--dql-surface);
+  color: var(--dql-warn-text);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.dql-dropped-dismiss:hover {
+  background: var(--dql-warn-soft);
+}
+
+/* ==========================================================================
+   Renderer base — all leaf inputs share `.dql-input`
+   ========================================================================== */
+
+.dql-input {
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-text-strong);
+  outline: none;
+}
+
+/* Generic single-line text/number/date inputs */
+.dql-input--string,
+.dql-input--number,
+.dql-input--date,
+.dql-input--datetime,
+.dql-input--id-fallback,
+.dql-input--id-multi-fallback {
+  display: block;
+  width: 100%;
+  height: var(--dql-control-h);
+  padding: 0 10px;
+  background: var(--dql-surface);
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  transition: border-color 120ms ease;
+}
+.dql-input--string:hover,
+.dql-input--string:focus,
+.dql-input--number:hover,
+.dql-input--number:focus,
+.dql-input--date:hover,
+.dql-input--date:focus,
+.dql-input--datetime:hover,
+.dql-input--datetime:focus,
+.dql-input--id-fallback:hover,
+.dql-input--id-fallback:focus,
+.dql-input--id-multi-fallback:hover,
+.dql-input--id-multi-fallback:focus {
+  border-color: var(--dql-border-strong);
+}
+
+/* Boolean toggle */
+.dql-input--boolean {
+  display: inline-flex;
+  align-items: center;
+  height: var(--dql-control-h);
+}
+.dql-input--boolean input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--dql-accent);
+}
+
+/* Enum single-select */
+.dql-input--enum-single {
+  display: block;
+  width: 100%;
+  height: var(--dql-control-h);
+  padding: 0 28px 0 10px;
+  background-color: var(--dql-surface);
+  background-image: linear-gradient(45deg, transparent 50%, var(--dql-text-muted) 50%),
+    linear-gradient(135deg, var(--dql-text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.dql-input--enum-single:hover,
+.dql-input--enum-single:focus {
+  border-color: var(--dql-border-strong);
+}
+
+/* Enum multi (checkbox row) */
+.dql-input--enum-multi {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 4px 0;
+  min-height: var(--dql-control-h);
+}
+.dql-enum-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-text-strong);
+  cursor: pointer;
+}
+.dql-enum-checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--dql-accent);
+}
+.dql-enum-label {
+  user-select: none;
+}
+
+/* Pair inputs (between, ranges) */
+.dql-input--number-pair,
+.dql-input--date-range,
+.dql-input--datetime-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dql-pair-min,
+.dql-pair-max {
+  flex: 1;
+  min-width: 0;
+  height: var(--dql-control-h);
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  background: var(--dql-surface);
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.dql-pair-min:hover,
+.dql-pair-min:focus,
+.dql-pair-max:hover,
+.dql-pair-max:focus {
+  border-color: var(--dql-border-strong);
+}
+.dql-pair-separator {
+  color: var(--dql-text-faint);
+  font-size: var(--dql-font-size-xs);
+}
+
+/* Relative-time (datetime + inLast) */
+.dql-input--in-last {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dql-inlast-amount {
+  width: 80px;
+  height: var(--dql-control-h);
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  background: var(--dql-surface);
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  outline: none;
+}
+.dql-inlast-amount:hover,
+.dql-inlast-amount:focus {
+  border-color: var(--dql-border-strong);
+}
+.dql-inlast-unit {
+  height: var(--dql-control-h);
+  padding: 0 28px 0 10px;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  background-color: var(--dql-surface);
+  background-image: linear-gradient(45deg, transparent 50%, var(--dql-text-muted) 50%),
+    linear-gradient(135deg, var(--dql-text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.dql-inlast-unit:hover,
+.dql-inlast-unit:focus {
+  border-color: var(--dql-border-strong);
+}
+
+/* ==========================================================================
+   Token list (string/number list ops: in / notIn)
+   ========================================================================== */
+
+.dql-input--token-list,
+.dql-input--number-token-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  min-height: var(--dql-control-h);
+  background: var(--dql-surface);
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  transition: border-color 120ms ease;
+}
+.dql-input--token-list:focus-within,
+.dql-input--number-token-list:focus-within {
+  border-color: var(--dql-border-strong);
+}
+
+.dql-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 4px 0 8px;
+  font-size: var(--dql-font-size-xs);
+  background: var(--dql-surface-soft);
+  color: var(--dql-text-strong);
+  border-radius: var(--dql-radius-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dql-token-text {
+  line-height: 1;
+}
+.dql-token-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  border: none;
+  border-radius: var(--dql-radius-sm);
+  background: transparent;
+  color: var(--dql-text-faint);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dql-token-remove:hover {
+  background: var(--dql-danger-soft);
+  color: var(--dql-danger);
+}
+
+.dql-token-input {
+  flex: 1;
+  min-width: 60px;
+  height: 20px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+}
+
+/* ==========================================================================
+   Id<T> autocomplete (single + multi share most styling)
+   ========================================================================== */
+
+.dql-input--id,
+.dql-input--id-multi {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  min-height: var(--dql-control-h);
+  background: var(--dql-surface);
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  transition: border-color 120ms ease;
+}
+.dql-input--id:focus-within,
+.dql-input--id-multi:focus-within {
+  border-color: var(--dql-border-strong);
+}
+
+.dql-id-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 4px 0 8px;
+  font-size: var(--dql-font-size-xs);
+  background: var(--dql-surface-soft);
+  color: var(--dql-text-strong);
+  border-radius: var(--dql-radius-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dql-id-chip-label {
+  line-height: 1;
+  white-space: nowrap;
+}
+.dql-id-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  border: none;
+  border-radius: var(--dql-radius-sm);
+  background: transparent;
+  color: var(--dql-text-faint);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dql-id-chip-clear:hover {
+  background: var(--dql-danger-soft);
+  color: var(--dql-danger);
+}
+
+.dql-id-search {
+  flex: 1;
+  min-width: 80px;
+  height: 20px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+}
+
+.dql-id-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  list-style: none;
+  z-index: 20;
+  background: var(--dql-surface);
+  border-radius: var(--dql-radius-md);
+  box-shadow: var(--dql-ring), var(--dql-shadow-md);
+  max-height: 224px;
+  overflow-y: auto;
+}
+.dql-id-result {
+  padding: 6px 12px;
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-text-strong);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.dql-id-result:hover {
+  background: var(--dql-surface-soft);
+}

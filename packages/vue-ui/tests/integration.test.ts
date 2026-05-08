@@ -8,7 +8,7 @@ import { integer, pgTable, serial, text } from 'drizzle-orm/pg-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { createDqlKit, useFilter } from '@dql-kit/vue-headless'
-import { FilterBuilder } from '../src/index.ts'
+import { FilterPanel } from '../src/index.ts'
 
 const articles = pgTable('articles', {
   id: serial('id').primaryKey(),
@@ -21,7 +21,7 @@ const schema = defineFilterSchema({
   },
 })
 
-describe('end-to-end: FilterBuilder → composable → URL round-trip → Drizzle → pglite', () => {
+describe('end-to-end: FilterPanel → composable → URL round-trip → Drizzle → pglite', () => {
   let db: ReturnType<typeof drizzle>
   let client: PGlite
 
@@ -46,7 +46,7 @@ describe('end-to-end: FilterBuilder → composable → URL round-trip → Drizzl
       },
     })
 
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
 
     // 1. Drive the input through the mounted UI.
     const input = wrapper.find('input.dql-input--string')
@@ -180,7 +180,7 @@ describe('end-to-end: nested filter via actions → URL → pglite', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     // Two groups: root + nested. Two combinator selects.
     expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(2)
     expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(true)
@@ -269,7 +269,7 @@ describe('end-to-end: f.custom + createDqlKit({ renderers }) + ops', () => {
   let client: PGlite
   // Built once for the suite — registers MoneyInput for the
   // `moneyE2E` typeId. Provided to mount() via global.plugins so the
-  // dqlKit injection key is in scope for FilterBuilder.
+  // dqlKit injection key is in scope for FilterPanel.
   const dqlKit = createDqlKit({
     renderers: { moneyE2E: MoneyInput },
   })
@@ -294,7 +294,7 @@ describe('end-to-end: f.custom + createDqlKit({ renderers }) + ops', () => {
   })
 
   it('drives the full extensibility path with one shared schema instance', async () => {
-    // 1. Mount FilterBuilder against the custom-type schema.
+    // 1. Mount FilterPanel against the custom-type schema.
     const filter = useFilter({
       schema: moneySchema,
       sync: 'none',
@@ -305,7 +305,7 @@ describe('end-to-end: f.custom + createDqlKit({ renderers }) + ops', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, {
+    const wrapper = mount(FilterPanel, {
       props: { filter },
       global: { plugins: [dqlKit] },
     })
@@ -343,80 +343,6 @@ describe('end-to-end: f.custom + createDqlKit({ renderers }) + ops', () => {
     const rows = await db.select().from(moneyTable).where(translator.toWhere(decoded.ast))
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ priceAmount: 250, priceCurrency: 'USD' })
-  })
-})
-
-// Slice 13: both variants on the same router-aware filter, with a
-// shared #value slot override that renders identical custom inputs in
-// both UIs. Exercises the slot system + popover behaviour + URL sync
-// in one integrated harness.
-describe('end-to-end: vertical-stack + popover-trigger sharing one slot override', () => {
-  it('renders identical slot content in both variants and keeps URL state shared', async () => {
-    const variantSchema = defineFilterSchema({
-      fields: {
-        title: f.string(),
-      },
-    })
-    const filter = useFilter({
-      schema: variantSchema,
-      sync: 'none',
-      initial: {
-        combinator: 'and',
-        children: [{ field: 'title', op: 'eq', value: 'shared' }],
-      },
-    })
-    const valueSlot = {
-      value: ({
-        value,
-        setValue,
-      }: {
-        value: unknown
-        setValue: (v: unknown) => void
-      }) =>
-        h('input', {
-          type: 'text',
-          'data-testid': 'shared-slot',
-          value: typeof value === 'string' ? value : '',
-          onInput: (e: Event) => setValue((e.target as HTMLInputElement).value),
-        }),
-    }
-
-    const stack = mount(FilterBuilder, {
-      props: { filter, variant: 'vertical-stack' },
-      slots: valueSlot,
-      attachTo: document.body,
-    })
-    expect(stack.find('[data-testid="shared-slot"]').exists()).toBe(true)
-    await stack.find('[data-testid="shared-slot"]').setValue('via-stack')
-    expect(filter.valid.value.children[0]).toEqual({
-      field: 'title',
-      op: 'eq',
-      value: 'via-stack',
-    })
-
-    // Mount the popover variant against the same filter — slot override
-    // applies identically and shares state via the composable.
-    const pop = mount(FilterBuilder, {
-      props: { filter, variant: 'popover-trigger' },
-      slots: valueSlot,
-      attachTo: document.body,
-    })
-    expect(pop.find('[data-testid="popover-trigger"]').text()).toBe('1 filter')
-    await pop.find('[data-testid="popover-trigger"]').trigger('click')
-    expect(pop.find('[data-testid="popover-panel"]').exists()).toBe(true)
-    expect(pop.find('[data-testid="shared-slot"]').exists()).toBe(true)
-    await pop.find('[data-testid="shared-slot"]').setValue('via-popover')
-    expect(filter.valid.value.children[0]).toEqual({
-      field: 'title',
-      op: 'eq',
-      value: 'via-popover',
-    })
-    // Both UIs reflect the shared filter state immediately.
-    const stackInput = stack.find('[data-testid="shared-slot"]').element as HTMLInputElement
-    expect(stackInput.value).toBe('via-popover')
-
-    stack.unmount()
-    pop.unmount()
   })
 })
 
@@ -469,7 +395,7 @@ describe('end-to-end: schema evolution dropped[] flow', () => {
     })
     filter.dropped.value = decoded.dropped
 
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
 
     // 3. Notice renders with the right count.
     const notice = wrapper.find('[data-testid="dropped-notice"]')
@@ -496,7 +422,7 @@ describe('end-to-end: schema evolution dropped[] flow', () => {
 describe('end-to-end: validation error UI', () => {
   it('walks a single condition through every error code and back to clean', async () => {
     const filter = useFilter({ schema: nestedSchema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
 
     const codeAt = (i: number) =>
       wrapper.findAll('[data-testid="condition"]')[i]

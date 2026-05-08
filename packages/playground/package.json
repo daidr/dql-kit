@@ -1,0 +1,26 @@
+{
+  "name": "@dql-kit/playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@dql-kit/core": "workspace:*",
+    "@dql-kit/drizzle": "workspace:*",
+    "@dql-kit/vue-headless": "workspace:*",
+    "@dql-kit/vue-ui": "workspace:*",
+    "drizzle-orm": "^0.45.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0",
+    "vue-tsc": "^2.1.0"
+  }
+}

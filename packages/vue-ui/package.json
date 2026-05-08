@@ -12,11 +12,15 @@
       },
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./styles.css": {
+      "development": "./src/styles.css",
+      "default": "./dist/styles.css"
     }
   },
   "files": ["src", "dist"],
   "scripts": {
-    "build": "bun build ./src/index.ts --outdir ./dist --target browser --format esm --external vue --external @dql-kit/core --external @dql-kit/vue-headless && tsc -p tsconfig.build.json",
+    "build": "bun build ./src/index.ts --outdir ./dist --target browser --format esm --external vue --external @dql-kit/core --external @dql-kit/vue-headless && tsc -p tsconfig.build.json && bun run ./scripts/copy-styles.ts",
     "type-check": "tsc --noEmit",
     "test": "vitest run"
   },

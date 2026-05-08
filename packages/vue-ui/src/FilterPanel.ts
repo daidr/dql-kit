@@ -6,7 +6,6 @@ import {
   type FieldDef,
   type Label,
   type OpDef,
-  type ValidNode,
   type ValueShape,
 } from '@dql-kit/core'
 import {
@@ -20,10 +19,7 @@ import {
   defineComponent,
   h,
   inject,
-  onBeforeUnmount,
-  onMounted,
   provide,
-  ref,
   type PropType,
   type VNode,
 } from 'vue'
@@ -31,7 +27,6 @@ import {
   StringInput,
   resolveRenderer as resolveRendererFn,
 } from './renderers.ts'
-import type { Variant } from './types.ts'
 
 const resolveLabel = (label: Label | undefined, fallback: string): string => {
   if (label === undefined) return fallback
@@ -70,9 +65,6 @@ const useOpLabelResolver = () => {
 // development.
 const isProductionMode = (): boolean => {
   try {
-    // Read NODE_ENV via globalThis so the package compiles under any
-    // runtime without depending on @types/node (browser bundlers replace
-    // process.env.NODE_ENV at build time, leaving the literal here).
     const g = globalThis as { process?: { env?: { NODE_ENV?: string } } }
     return g.process?.env?.NODE_ENV === 'production'
   } catch {
@@ -92,26 +84,24 @@ const fallbackRenderer = (typeId: string) => {
   return StringInput
 }
 
-const countConditions = (node: ValidNode): number => {
-  if ('combinator' in node) {
-    return node.children.reduce((sum, c) => sum + countConditions(c), 0)
-  }
-  return 1
-}
-
-export const FilterBuilder = defineComponent({
-  name: 'FilterBuilder',
+/**
+ * The filter editing surface — group / condition tree with renderers,
+ * combinator pickers, add/remove buttons, and the dropped-from-URL
+ * notice.
+ *
+ * Pure rendering. No popover, no trigger, no internal show/hide state.
+ * Compose with `<FilterButton>` (or any host-managed trigger) to build
+ * a popover; render directly inline for an always-on filter UI.
+ */
+export const FilterPanel = defineComponent({
+  name: 'FilterPanel',
   props: {
     filter: {
       type: Object as PropType<UseFilterReturn>,
       required: true,
     },
-    variant: {
-      type: String as PropType<Variant>,
-      default: 'vertical-stack',
-    },
   },
-  setup(props, { slots }) {
+  setup(props) {
     // Expose the active filter to descendant renderers (used by id
     // autocomplete to drive search.setQuery and read labelOf).
     provide(filterInjectionKey, props.filter)
@@ -136,7 +126,7 @@ export const FilterBuilder = defineComponent({
     const errorsAtPath = (path: number[]) =>
       errors.value.filter((e) => pathsEqual(e.path, path))
 
-    const renderDefaultField = (cond: DraftCondition, path: number[]): VNode =>
+    const renderField = (cond: DraftCondition, path: number[]): VNode =>
       h(
         'select',
         {
@@ -157,7 +147,7 @@ export const FilterBuilder = defineComponent({
         ],
       )
 
-    const renderDefaultOperator = (
+    const renderOperator = (
       cond: DraftCondition,
       path: number[],
       fieldDef: FieldDef | undefined,
@@ -178,14 +168,12 @@ export const FilterBuilder = defineComponent({
         },
         [
           h('option', { value: '' }, '— op —'),
-          ...ops.map((o) =>
-            h('option', { value: o.name }, resolveOpLabel(o)),
-          ),
+          ...ops.map((o) => h('option', { value: o.name }, resolveOpLabel(o))),
         ],
       )
     }
 
-    const renderDefaultValue = (
+    const renderValue = (
       cond: DraftCondition,
       path: number[],
       rendererField: FieldDef | undefined,
@@ -211,91 +199,21 @@ export const FilterBuilder = defineComponent({
       const fieldDef = s && cond.field ? s.fields[cond.field] : undefined
       const ops = fieldDef?.ops ?? []
       const op = fieldDef && cond.op ? fieldDef.ops.find((o) => o.name === cond.op) : undefined
+      // For array<U>, the value renderer dispatches off the inner item
+      // type so e.g. an array<string> with `contains` op still renders a
+      // single string input.
       const rendererField =
         fieldDef && fieldDef.typeId === 'array' && fieldDef.itemType
           ? fieldDef.itemType
           : fieldDef
 
-      // Slot scopes — exposed on each row so consumers can replace
-      // sub-pieces (#operator, #value) or the whole row (#condition).
-      // Each scope carries setX helpers so the slot doesn't need to
-      // import the actions surface separately.
-      const setField = (key: string) =>
-        props.filter.actions.updateNode(path, { field: key })
-      const setOp = (opName: string) =>
-        props.filter.actions.updateNode(path, { op: opName })
-      const setValue = (v: unknown) =>
-        props.filter.actions.updateNode(path, { value: v })
-      const remove = () => props.filter.actions.removeNode(path)
-
-      const operatorNode = slots.operator
-        ? slots.operator({
-            path,
-            condition: cond,
-            field: fieldDef,
-            ops,
-            op,
-            setOp,
-            defaultRender: () => renderDefaultOperator(cond, path, fieldDef, ops),
-          })
-        : renderDefaultOperator(cond, path, fieldDef, ops)
-
-      const valueNode = slots.value
-        ? slots.value({
-            path,
-            condition: cond,
-            field: rendererField,
-            op,
-            value: cond.value,
-            setValue,
-            defaultRender: () => renderDefaultValue(cond, path, rendererField, op),
-          })
-        : renderDefaultValue(cond, path, rendererField, op)
-
       const errs = errorsAtPath(path)
 
-      // #condition slot: replace the entire row. defaultRender below
-      // keeps the standard layout so consumers can render some custom
-      // wrapper around the default content.
-      if (slots.condition) {
-        return h(
-          'div',
-          {
-            class: ['dql-condition', errs.length > 0 ? 'dql-condition--error' : null].filter(
-              Boolean,
-            ) as string[],
-            'data-testid': 'condition',
-            'data-has-error': errs.length > 0 ? 'true' : 'false',
-          },
-          slots.condition({
-            path,
-            condition: cond,
-            field: fieldDef,
-            fieldOptions: fieldOptions.value,
-            op,
-            errors: errs,
-            setField,
-            setOp,
-            setValue,
-            remove,
-            defaultField: () => renderDefaultField(cond, path),
-            defaultOperator: () => renderDefaultOperator(cond, path, fieldDef, ops),
-            defaultValue: () => renderDefaultValue(cond, path, rendererField, op),
-          }),
-        )
-      }
-
-      const fieldSelect = renderDefaultField(cond, path)
-
-      const removeBtn = h(
-        'button',
-        {
-          type: 'button',
-          class: 'dql-remove',
-          'data-testid': 'remove-condition',
-          onClick: remove,
-        },
-        '×',
+      const valueNode = renderValue(cond, path, rendererField, op)
+      const valueCell = h(
+        'div',
+        { class: 'dql-condition__value' },
+        valueNode ? [valueNode] : [],
       )
 
       const errorIndicator =
@@ -308,10 +226,23 @@ export const FilterBuilder = defineComponent({
                 'data-error-code': errs[0]!.code,
                 role: 'status',
                 'aria-label': errs[0]!.code,
+                title: errs[0]!.code,
               },
               '!',
             )
           : null
+
+      const removeBtn = h(
+        'button',
+        {
+          type: 'button',
+          class: 'dql-remove',
+          'data-testid': 'remove-condition',
+          'aria-label': 'remove condition',
+          onClick: () => props.filter.actions.removeNode(path),
+        },
+        '×',
+      )
 
       return h(
         'div',
@@ -323,9 +254,13 @@ export const FilterBuilder = defineComponent({
           'data-testid': 'condition',
           'data-has-error': errs.length > 0 ? 'true' : 'false',
         },
-        [fieldSelect, operatorNode, valueNode, errorIndicator, removeBtn].filter(
-          Boolean,
-        ) as VNode[],
+        [
+          renderField(cond, path),
+          renderOperator(cond, path, fieldDef, ops),
+          valueCell,
+          errorIndicator,
+          removeBtn,
+        ].filter(Boolean) as VNode[],
       )
     }
 
@@ -333,43 +268,37 @@ export const FilterBuilder = defineComponent({
       const isRoot = path.length === 0
       const depth = path.length
 
-      const combinatorSelect = h(
-        'select',
-        {
-          class: 'dql-combinator-select',
-          'data-testid': 'combinator-select',
-          value: group.combinator,
-          onChange: (e: Event) => {
-            const v = (e.target as HTMLSelectElement).value as 'and' | 'or'
-            props.filter.actions.setCombinator(path, v)
-          },
-        },
-        [
-          h('option', { value: 'and' }, 'AND'),
-          h('option', { value: 'or' }, 'OR'),
-        ],
-      )
+      // Mirror the canonical-AST flatten rule visually: AND/OR has no
+      // observable effect on a 0- or 1-child group, so the picker is
+      // hidden. Reappears as soon as a second child shows up.
+      const showCombinator = group.children.length > 1
 
-      const removeGroupBtn = isRoot
-        ? null
-        : h(
-            'button',
-            {
-              type: 'button',
-              class: 'dql-remove dql-remove-group',
-              'data-testid': 'remove-group',
-              onClick: () => props.filter.actions.removeNode(path),
-            },
-            '×',
+      const combinatorCol = showCombinator
+        ? h(
+            'div',
+            { class: 'dql-group__combinator' },
+            [
+              h(
+                'select',
+                {
+                  class: 'dql-combinator-select',
+                  'data-testid': 'combinator-select',
+                  value: group.combinator,
+                  onChange: (e: Event) => {
+                    const v = (e.target as HTMLSelectElement).value as 'and' | 'or'
+                    props.filter.actions.setCombinator(path, v)
+                  },
+                },
+                [
+                  h('option', { value: 'and' }, 'AND'),
+                  h('option', { value: 'or' }, 'OR'),
+                ],
+              ),
+            ],
           )
+        : null
 
-      const header = h(
-        'div',
-        { class: 'dql-group-header' },
-        [combinatorSelect, removeGroupBtn].filter(Boolean) as VNode[],
-      )
-
-      const children = group.children.map((child: DraftNode, i: number) => {
+      const childNodes = group.children.map((child: DraftNode, i: number) => {
         const childPath = [...path, i]
         return isGroup(child)
           ? renderGroup(child as DraftGroup, childPath)
@@ -398,6 +327,38 @@ export const FilterBuilder = defineComponent({
         '+ Group',
       )
 
+      const addRow = h(
+        'div',
+        { class: 'dql-group__add-row' },
+        [addCondBtn, addGroupBtn],
+      )
+
+      const body = h(
+        'div',
+        { class: 'dql-group__body' },
+        [...childNodes, addRow],
+      )
+
+      const removeCol = isRoot
+        ? null
+        : h(
+            'div',
+            { class: 'dql-group__remove-col' },
+            [
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'dql-remove dql-remove-group',
+                  'data-testid': 'remove-group',
+                  'aria-label': 'remove group',
+                  onClick: () => props.filter.actions.removeNode(path),
+                },
+                '×',
+              ),
+            ],
+          )
+
       return h(
         'div',
         {
@@ -409,7 +370,7 @@ export const FilterBuilder = defineComponent({
           'data-testid': isRoot ? 'group' : 'group-nested',
           'data-depth': String(depth),
         },
-        [header, ...children, addCondBtn, addGroupBtn],
+        [combinatorCol, body, removeCol].filter(Boolean) as VNode[],
       )
     }
 
@@ -443,105 +404,18 @@ export const FilterBuilder = defineComponent({
           )
         : null
 
-    // Popover-trigger variant state: open flag + DOM refs for outside-
-    // click detection. Listeners are attached on mount and torn down
-    // before unmount (SSR-safe — both hooks are client-only).
-    const popoverOpen = ref(false)
-    const triggerEl = ref<HTMLElement | null>(null)
-    const panelEl = ref<HTMLElement | null>(null)
-
-    const onDocMousedown = (e: MouseEvent) => {
-      if (!popoverOpen.value) return
-      const target = e.target as Node | null
-      if (!target) return
-      if (panelEl.value && panelEl.value.contains(target)) return
-      if (triggerEl.value && triggerEl.value.contains(target)) return
-      popoverOpen.value = false
-    }
-    const onDocKeydown = (e: KeyboardEvent) => {
-      if (popoverOpen.value && e.key === 'Escape') {
-        popoverOpen.value = false
-      }
-    }
-
-    onMounted(() => {
-      if (typeof document === 'undefined') return
-      document.addEventListener('mousedown', onDocMousedown)
-      document.addEventListener('keydown', onDocKeydown)
-    })
-    onBeforeUnmount(() => {
-      if (typeof document === 'undefined') return
-      document.removeEventListener('mousedown', onDocMousedown)
-      document.removeEventListener('keydown', onDocKeydown)
-    })
-
-    const triggerLabel = computed(() => {
-      const count = countConditions(props.filter.valid.value)
-      if (count === 0) return 'Filter'
-      return `${count} filter${count === 1 ? '' : 's'}`
-    })
-
     return () => {
       const droppedNotice = renderDroppedNotice()
       const builder = renderGroup(draft.value, [])
 
-      if (props.variant === 'popover-trigger') {
-        const trigger = h(
-          'button',
-          {
-            type: 'button',
-            class: 'dql-popover-trigger',
-            'data-testid': 'popover-trigger',
-            'data-open': popoverOpen.value ? 'true' : 'false',
-            'data-condition-count': String(countConditions(props.filter.valid.value)),
-            'aria-expanded': popoverOpen.value ? 'true' : 'false',
-            onClick: () => {
-              popoverOpen.value = !popoverOpen.value
-            },
-            ref: (el) => {
-              triggerEl.value = el as HTMLElement | null
-            },
-          },
-          triggerLabel.value,
-        )
-
-        const panel = popoverOpen.value
-          ? h(
-              'div',
-              {
-                class: 'dql-popover-panel',
-                'data-testid': 'popover-panel',
-                role: 'dialog',
-                ref: (el) => {
-                  panelEl.value = el as HTMLElement | null
-                },
-              },
-              [droppedNotice, builder].filter(Boolean) as VNode[],
-            )
-          : null
-
-        return h(
-          'div',
-          {
-            class: ['dql-filter-builder', 'dql-variant-popover-trigger'],
-            'data-testid': 'filter-builder',
-            'data-variant': 'popover-trigger',
-          },
-          [trigger, panel].filter(Boolean) as VNode[],
-        )
-      }
-
-      // vertical-stack (default)
       return h(
         'div',
         {
-          class: ['dql-filter-builder', 'dql-variant-vertical-stack'],
-          'data-testid': 'filter-builder',
-          'data-variant': 'vertical-stack',
+          class: 'dql-filter-panel',
+          'data-testid': 'filter-panel',
         },
         [droppedNotice, builder].filter(Boolean) as VNode[],
       )
     }
   },
 })
-

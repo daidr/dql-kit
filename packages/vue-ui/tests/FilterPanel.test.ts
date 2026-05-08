@@ -3,7 +3,7 @@ import { createDqlKit, useFilter } from '@dql-kit/vue-headless'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick, ref } from 'vue'
-import { FilterBuilder } from '../src/index.ts'
+import { FilterPanel } from '../src/index.ts'
 
 const schema = defineFilterSchema({
   fields: {
@@ -25,19 +25,17 @@ const schema = defineFilterSchema({
   },
 })
 
-describe('FilterBuilder — vertical-stack variant', () => {
-  it('mounts under the default variant without errors', () => {
+describe('FilterPanel — rendering', () => {
+  it('mounts and exposes the add-condition affordance', () => {
     const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
-    expect(wrapper.find('[data-testid="filter-builder"]').classes()).toContain(
-      'dql-variant-vertical-stack',
-    )
+    const wrapper = mount(FilterPanel, { props: { filter } })
+    expect(wrapper.find('[data-testid="filter-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="add-condition"]').exists()).toBe(true)
   })
 
   it('clicking +Condition adds a row through the composable', async () => {
     const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="add-condition"]').trigger('click')
     expect(filter.draft.value.children).toHaveLength(1)
     expect(wrapper.findAll('[data-testid="condition"]')).toHaveLength(1)
@@ -52,7 +50,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'eq', value: '' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const inputs = wrapper.findAll('input.dql-input--string')
     expect(inputs).toHaveLength(1)
     await inputs[0]!.setValue('hello')
@@ -71,7 +69,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'eq', value: 'a' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="remove-condition"]').trigger('click')
     expect(filter.draft.value.children).toHaveLength(0)
   })
@@ -85,7 +83,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'isEmpty', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.findAll('input.dql-input--string')).toHaveLength(0)
     expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(false)
   })
@@ -99,7 +97,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'in', value: ['a', 'b'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(true)
     expect(wrapper.findAll('[data-testid="token"]')).toHaveLength(2)
     expect(wrapper.findAll('input.dql-input--string')).toHaveLength(0)
@@ -114,7 +112,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'in', value: ['a'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="token-input"]')
     await input.setValue('b')
     await input.trigger('keydown', { key: 'Enter' })
@@ -134,7 +132,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'in', value: [] as string[] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="token-input"]')
     await input.setValue('foo')
     await input.trigger('keydown', { key: ',' })
@@ -154,7 +152,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'in', value: ['a', 'b', 'c'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const removes = wrapper.findAll('[data-testid="token-remove"]')
     expect(removes).toHaveLength(3)
     await removes[1]!.trigger('click')
@@ -174,7 +172,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'in', value: ['a', 'b'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="token-input"]')
     await input.trigger('keydown', { key: 'Backspace' })
     expect(filter.valid.value.children[0]).toEqual({
@@ -193,7 +191,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
         children: [{ field: 'title', op: 'in', value: ['a'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="token-input"]')
     await input.setValue('   ')
     await input.trigger('keydown', { key: 'Enter' })
@@ -205,7 +203,7 @@ describe('FilterBuilder — vertical-stack variant', () => {
   })
 })
 
-describe('FilterBuilder — number renderers', () => {
+describe('FilterPanel — number renderers', () => {
   it('renders a NumberInput for number-eq and emits numeric updates', async () => {
     const filter = useFilter({
       schema,
@@ -215,7 +213,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'eq', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('input.dql-input--number')
     expect(input.exists()).toBe(true)
     await input.setValue('42')
@@ -235,7 +233,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'eq', value: 5 }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('input.dql-input--number')
     await input.setValue('')
     expect(filter.valid.value.children).toHaveLength(0)
@@ -250,7 +248,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'between', value: [1, 5] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('input[type="range"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="pair-min"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="pair-max"]').exists()).toBe(true)
@@ -267,7 +265,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'between', value: [1, 5] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="pair-min"]').setValue('2')
     expect(filter.valid.value.children[0]).toEqual({
       field: 'rating',
@@ -291,7 +289,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'between', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="pair-min"]').setValue('3')
     // Only one half filled → value_type_mismatch (null in tuple) → pruned out.
     expect(filter.valid.value.children).toHaveLength(0)
@@ -312,7 +310,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'in', value: [1, 2, 3] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const tokens = wrapper.findAll('[data-testid="token"]')
     expect(tokens).toHaveLength(3)
     expect(tokens.map((t) => t.find('.dql-token-text').text())).toEqual(['1', '2', '3'])
@@ -327,7 +325,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'in', value: [1] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="token-input"]')
     await input.setValue('42')
     await input.trigger('keydown', { key: 'Enter' })
@@ -349,7 +347,7 @@ describe('FilterBuilder — number renderers', () => {
         children: [{ field: 'rating', op: 'in', value: [1] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="token-input"]')
     await input.setValue('not-a-number')
     await input.trigger('keydown', { key: 'Enter' })
@@ -361,7 +359,7 @@ describe('FilterBuilder — number renderers', () => {
   })
 })
 
-describe('FilterBuilder — boolean renderer', () => {
+describe('FilterPanel — boolean renderer', () => {
   it('renders a switch-role checkbox for boolean eq', () => {
     const filter = useFilter({
       schema,
@@ -371,7 +369,7 @@ describe('FilterBuilder — boolean renderer', () => {
         children: [{ field: 'isActive', op: 'eq', value: false }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const sw = wrapper.find('[data-testid="boolean-switch"]')
     expect(sw.exists()).toBe(true)
     expect(sw.attributes('role')).toBe('switch')
@@ -387,7 +385,7 @@ describe('FilterBuilder — boolean renderer', () => {
         children: [{ field: 'isActive', op: 'eq', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const sw = wrapper.find('[data-testid="boolean-switch"]')
     await sw.setValue(true)
     expect(filter.valid.value.children[0]).toEqual({
@@ -404,7 +402,7 @@ describe('FilterBuilder — boolean renderer', () => {
   })
 })
 
-describe('FilterBuilder — enum renderers', () => {
+describe('FilterPanel — enum renderers', () => {
   it('renders EnumSelect with one option per declared value plus a placeholder', () => {
     const filter = useFilter({
       schema,
@@ -414,7 +412,7 @@ describe('FilterBuilder — enum renderers', () => {
         children: [{ field: 'status', op: 'eq', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const select = wrapper.find('[data-testid="enum-select"]')
     expect(select.exists()).toBe(true)
     const options = wrapper.findAll('[data-testid="enum-select"] option')
@@ -431,7 +429,7 @@ describe('FilterBuilder — enum renderers', () => {
         children: [{ field: 'status', op: 'eq', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const draftOption = wrapper.find('[data-testid="enum-option-draft"]')
     expect(draftOption.exists()).toBe(true)
     expect(draftOption.text()).toBe('草稿')
@@ -448,7 +446,7 @@ describe('FilterBuilder — enum renderers', () => {
         children: [{ field: 'status', op: 'eq', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const select = wrapper.find('[data-testid="enum-select"]')
     await select.setValue('published')
     expect(filter.valid.value.children[0]).toEqual({
@@ -467,7 +465,7 @@ describe('FilterBuilder — enum renderers', () => {
         children: [{ field: 'priority', op: 'eq', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const select = wrapper.find('[data-testid="enum-select"]')
     await select.setValue('1')
     expect(filter.valid.value.children[0]).toEqual({
@@ -486,7 +484,7 @@ describe('FilterBuilder — enum renderers', () => {
         children: [{ field: 'status', op: 'in', value: ['draft'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="enum-multi"]').exists()).toBe(true)
     const draftBox = wrapper.find('[data-testid="enum-multi-option-draft"] input')
     const publishedBox = wrapper.find('[data-testid="enum-multi-option-published"] input')
@@ -503,7 +501,7 @@ describe('FilterBuilder — enum renderers', () => {
         children: [{ field: 'status', op: 'in', value: ['draft'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper
       .find('[data-testid="enum-multi-option-published"] input')
       .setValue(true)
@@ -531,7 +529,7 @@ describe('FilterBuilder — enum renderers', () => {
         children: [{ field: 'priority', op: 'in', value: [] as number[] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="enum-multi-option-2"] input').setValue(true)
     const cond = filter.valid.value.children[0] as { value: unknown[] }
     expect(cond.value).toEqual([2])
@@ -539,7 +537,7 @@ describe('FilterBuilder — enum renderers', () => {
   })
 })
 
-describe('FilterBuilder — date renderer', () => {
+describe('FilterPanel — date renderer', () => {
   it('renders <input type="date"> for date eq and emits ISO calendar strings', async () => {
     const filter = useFilter({
       schema,
@@ -549,7 +547,7 @@ describe('FilterBuilder — date renderer', () => {
         children: [{ field: 'publishedOn', op: 'eq', value: '2026-05-01' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="date-input"]')
     expect(input.exists()).toBe(true)
     expect(input.attributes('type')).toBe('date')
@@ -571,7 +569,7 @@ describe('FilterBuilder — date renderer', () => {
         children: [{ field: 'publishedOn', op: 'eq', value: '2026-05-01' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="date-input"]').setValue('')
     expect(filter.valid.value.children).toHaveLength(0)
   })
@@ -585,7 +583,7 @@ describe('FilterBuilder — date renderer', () => {
         children: [{ field: 'publishedOn', op: 'between', value: ['2026-05-01', '2026-05-31'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="date-pair-min"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="date-pair-max"]').exists()).toBe(true)
     await wrapper.find('[data-testid="date-pair-max"]').setValue('2026-06-30')
@@ -597,7 +595,7 @@ describe('FilterBuilder — date renderer', () => {
   })
 })
 
-describe('FilterBuilder — datetime renderer', () => {
+describe('FilterPanel — datetime renderer', () => {
   it('renders <input type="datetime-local"> for datetime before', () => {
     const filter = useFilter({
       schema,
@@ -607,7 +605,7 @@ describe('FilterBuilder — datetime renderer', () => {
         children: [{ field: 'occurredAt', op: 'before', value: '2026-05-01T10:30:00Z' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="datetime-input"]')
     expect(input.exists()).toBe(true)
     expect(input.attributes('type')).toBe('datetime-local')
@@ -622,7 +620,7 @@ describe('FilterBuilder — datetime renderer', () => {
         children: [{ field: 'occurredAt', op: 'before', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="datetime-input"]')
     const local = '2026-05-01T10:30'
     await input.setValue(local)
@@ -649,13 +647,13 @@ describe('FilterBuilder — datetime renderer', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="datetime-pair-min"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="datetime-pair-max"]').exists()).toBe(true)
   })
 })
 
-describe('FilterBuilder — datetime inLast renderer', () => {
+describe('FilterPanel — datetime inLast renderer', () => {
   it('renders amount + unit inputs (not a date picker) for inLast', () => {
     const filter = useFilter({
       schema,
@@ -665,7 +663,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="datetime-input"]').exists()).toBe(false)
     const amount = wrapper.find('[data-testid="inlast-amount"]')
     const unit = wrapper.find('[data-testid="inlast-unit"]')
@@ -685,7 +683,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     for (const u of ['minute', 'hour', 'day', 'week', 'month']) {
       expect(wrapper.find(`[data-testid="inlast-unit-${u}"]`).exists()).toBe(true)
     }
@@ -700,7 +698,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="inlast-amount"]').setValue('30')
     expect(filter.valid.value.children[0]).toEqual({
       field: 'occurredAt',
@@ -718,7 +716,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="inlast-unit"]').setValue('week')
     expect(filter.valid.value.children[0]).toEqual({
       field: 'occurredAt',
@@ -736,7 +734,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 7, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="inlast-amount"]').setValue('')
     expect(filter.valid.value.children).toHaveLength(0)
   })
@@ -753,7 +751,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="inlast-unit"]').setValue('week')
     // No emission yet (amount still missing).
     expect(filter.valid.value.children).toHaveLength(0)
@@ -768,7 +766,7 @@ describe('FilterBuilder — datetime inLast renderer', () => {
   })
 })
 
-describe('FilterBuilder — relative-unit i18n labels', () => {
+describe('FilterPanel — relative-unit i18n labels', () => {
   it('option text falls back to the unit key when no plugin is installed', () => {
     const filter = useFilter({
       schema,
@@ -779,7 +777,7 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
       },
     })
     // No app.use(dqlKit) — labels resolve to unit keys.
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="inlast-unit-day"]').text()).toBe('day')
     expect(wrapper.find('[data-testid="inlast-unit-week"]').text()).toBe('week')
     wrapper.unmount()
@@ -799,7 +797,7 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, {
+    const wrapper = mount(FilterPanel, {
       props: { filter },
       global: { plugins: [dqlKit] },
     })
@@ -829,7 +827,7 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
         children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'day' } }],
       },
     })
-    const wrapper = mount(FilterBuilder, {
+    const wrapper = mount(FilterPanel, {
       props: { filter },
       global: { plugins: [dqlKit] },
     })
@@ -845,7 +843,7 @@ describe('FilterBuilder — relative-unit i18n labels', () => {
   })
 })
 
-describe('FilterBuilder — id autocomplete renderer', () => {
+describe('FilterPanel — id autocomplete renderer', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -898,7 +896,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
       },
       debounceMs: 0,
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="id-search-input"]')
     expect(input.exists()).toBe(true)
     await input.trigger('focus')
@@ -927,7 +925,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
       },
       debounceMs: 0,
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="id-search-input"]').trigger('focus')
     await wrapper.find('[data-testid="id-search-input"]').setValue('a')
     await vi.advanceTimersByTimeAsync(0)
@@ -960,7 +958,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         children: [{ field: 'authorId', op: 'eq', value: 42 }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="id-chip"]').text()).toContain('…')
     resolveResolveFn([{ id: 42, label: 'Alice' }])
     await vi.advanceTimersByTimeAsync(0)
@@ -982,7 +980,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         children: [{ field: 'authorId', op: 'eq', value: 7 }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="id-clear"]').trigger('click')
     expect(filter.valid.value.children).toHaveLength(0)
     await wrapper.vm.$nextTick()
@@ -1003,7 +1001,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         children: [{ field: 'authorId', op: 'in', value: [1, 2] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="id-chip-1"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="id-chip-2"]').exists()).toBe(true)
 
@@ -1034,7 +1032,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
         children: [{ field: 'authorId', op: 'in', value: [1, 2, 3] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     await wrapper.find('[data-testid="id-chip-remove-2"]').trigger('click')
     expect(filter.valid.value.children[0]).toEqual({
       field: 'authorId',
@@ -1044,7 +1042,7 @@ describe('FilterBuilder — id autocomplete renderer', () => {
   })
 })
 
-describe('FilterBuilder — array<U> renderer dispatch', () => {
+describe('FilterPanel — array<U> renderer dispatch', () => {
   it('array<string> + contains (single shape) renders the string text input', async () => {
     const filter = useFilter({
       schema,
@@ -1054,7 +1052,7 @@ describe('FilterBuilder — array<U> renderer dispatch', () => {
         children: [{ field: 'tags', op: 'contains', value: '' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('input.dql-input--string')
     expect(input.exists()).toBe(true)
     await input.setValue('urgent')
@@ -1074,7 +1072,7 @@ describe('FilterBuilder — array<U> renderer dispatch', () => {
         children: [{ field: 'tags', op: 'containsAll', value: ['a', 'b'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(true)
     expect(wrapper.findAll('[data-testid="token"]')).toHaveLength(2)
 
@@ -1097,7 +1095,7 @@ describe('FilterBuilder — array<U> renderer dispatch', () => {
         children: [{ field: 'scores', op: 'containsAll', value: [1, 2] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const input = wrapper.find('[data-testid="token-input"]')
     expect(input.attributes('type')).toBe('number')
     await input.setValue('3')
@@ -1116,7 +1114,7 @@ describe('FilterBuilder — array<U> renderer dispatch', () => {
         children: [{ field: 'statusList', op: 'containsAll', value: ['draft'] }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="enum-multi"]').exists()).toBe(true)
     // valueLabels resolved from itemType (the inner enum field).
     expect(wrapper.find('[data-testid="enum-multi-option-draft"]').text()).toContain('草稿')
@@ -1140,16 +1138,16 @@ describe('FilterBuilder — array<U> renderer dispatch', () => {
         children: [{ field: 'tags', op: 'isEmpty', value: undefined }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.findAll('input.dql-input--string')).toHaveLength(0)
     expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(false)
   })
 })
 
-describe('FilterBuilder — nested groups', () => {
+describe('FilterPanel — nested groups', () => {
   it('renders the root group with depth=0 and no remove-group button', () => {
     const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const root = wrapper.find('[data-testid="group"]')
     expect(root.exists()).toBe(true)
     expect(root.attributes('data-depth')).toBe('0')
@@ -1160,15 +1158,69 @@ describe('FilterBuilder — nested groups', () => {
   })
 
   it('addGroup creates a nested group with depth=1 and a per-group combinator select', async () => {
-    const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
-    await wrapper.find('[data-testid="add-group"]').trigger('click')
+    // Seed root with 2+ children at each level so both combinators are
+    // visible — the builder hides the picker for 0/1-child groups, where
+    // AND/OR has no observable effect (mirrors canonical-AST flatten).
+    const filter = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'title', op: 'eq', value: 'a' },
+          {
+            combinator: 'and',
+            children: [
+              { field: 'title', op: 'eq', value: 'b' },
+              { field: 'title', op: 'eq', value: 'c' },
+            ],
+          },
+        ],
+      },
+    })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const nested = wrapper.find('[data-testid="group-nested"]')
     expect(nested.exists()).toBe(true)
     expect(nested.attributes('data-depth')).toBe('1')
     expect(nested.classes()).toContain('dql-group--nested')
     // Each group has its own combinator select (root + nested = 2).
     expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(2)
+  })
+
+  it('combinator picker is hidden for 0/1-child groups', async () => {
+    // Empty root → no combinator visible.
+    const filter = useFilter({ schema, sync: 'none' })
+    let wrapper = mount(FilterPanel, { props: { filter } })
+    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(0)
+    wrapper.unmount()
+
+    // Root with 1 condition → still no combinator.
+    const oneChild = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'title', op: 'eq', value: 'a' }],
+      },
+    })
+    wrapper = mount(FilterPanel, { props: { filter: oneChild } })
+    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(0)
+    wrapper.unmount()
+
+    // Root with 2 conditions → exactly one combinator.
+    const twoChildren = useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [
+          { field: 'title', op: 'eq', value: 'a' },
+          { field: 'title', op: 'eq', value: 'b' },
+        ],
+      },
+    })
+    wrapper = mount(FilterPanel, { props: { filter: twoChildren } })
+    expect(wrapper.findAll('[data-testid="combinator-select"]')).toHaveLength(1)
   })
 
   it('flipping the nested combinator updates only the nested group', async () => {
@@ -1178,19 +1230,23 @@ describe('FilterBuilder — nested groups', () => {
       initial: {
         combinator: 'and',
         children: [
+          { field: 'title', op: 'eq', value: 'top' },
           {
             combinator: 'and',
-            children: [{ field: 'title', op: 'eq', value: 'a' }],
+            children: [
+              { field: 'title', op: 'eq', value: 'a' },
+              { field: 'title', op: 'eq', value: 'b' },
+            ],
           },
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const selects = wrapper.findAll('[data-testid="combinator-select"]')
     expect(selects).toHaveLength(2)
     await selects[1]!.setValue('or')
     expect(filter.draft.value.combinator).toBe('and')
-    const innerGroup = filter.draft.value.children[0] as { combinator: string }
+    const innerGroup = filter.draft.value.children[1] as { combinator: string }
     expect(innerGroup.combinator).toBe('or')
   })
 
@@ -1212,7 +1268,7 @@ describe('FilterBuilder — nested groups', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(true)
     await wrapper.find('[data-testid="remove-group"]').trigger('click')
     expect(wrapper.find('[data-testid="group-nested"]').exists()).toBe(false)
@@ -1272,7 +1328,7 @@ describe('FilterBuilder — nested groups', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const depths = wrapper
       .findAll('[data-depth]')
       .map((el) => el.attributes('data-depth'))
@@ -1280,7 +1336,7 @@ describe('FilterBuilder — nested groups', () => {
   })
 })
 
-describe('FilterBuilder — validation error indicators', () => {
+describe('FilterPanel — validation error indicators', () => {
   it('clean draft has no error indicator and no error class on the condition row', () => {
     const filter = useFilter({
       schema,
@@ -1290,7 +1346,7 @@ describe('FilterBuilder — validation error indicators', () => {
         children: [{ field: 'title', op: 'eq', value: 'a' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const condition = wrapper.find('[data-testid="condition"]')
     expect(condition.attributes('data-has-error')).toBe('false')
     expect(condition.classes()).not.toContain('dql-condition--error')
@@ -1312,7 +1368,7 @@ describe('FilterBuilder — validation error indicators', () => {
         children: [child as { field: string | null, op: string | null, value?: unknown }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const condition = wrapper.find('[data-testid="condition"]')
     expect(condition.attributes('data-has-error')).toBe('true')
     expect(condition.classes()).toContain('dql-condition--error')
@@ -1334,7 +1390,7 @@ describe('FilterBuilder — validation error indicators', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const conditions = wrapper.findAll('[data-testid="condition"]')
     expect(conditions[0]?.attributes('data-has-error')).toBe('false')
     expect(conditions[1]?.attributes('data-has-error')).toBe('true')
@@ -1354,7 +1410,7 @@ describe('FilterBuilder — validation error indicators', () => {
         children: [{ field: 'rating', op: 'eq', value: 'oops' }],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="condition-error"]').exists()).toBe(true)
     // Fix the value through the composable.
     filter.actions.updateNode([0], { value: 5 })
@@ -1381,7 +1437,7 @@ describe('FilterBuilder — validation error indicators', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const conditions = wrapper.findAll('[data-testid="condition"]')
     // Three conditions total: [0], [1,0] (clean), [1,1] (unknown_field).
     expect(conditions).toHaveLength(3)
@@ -1394,7 +1450,7 @@ describe('FilterBuilder — validation error indicators', () => {
   })
 })
 
-describe('FilterBuilder — custom type renderer dispatch', () => {
+describe('FilterPanel — custom type renderer dispatch', () => {
   // Each test uses a unique typeId so the warn-once dedup doesn't bleed
   // across tests. Renderers are scoped to a freshly-built createDqlKit
   // per test, so there's no cross-test bleed even though warnedTypeIds
@@ -1460,7 +1516,7 @@ describe('FilterBuilder — custom type renderer dispatch', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, {
+    const wrapper = mount(FilterPanel, {
       props: { filter },
       global: { plugins: [dqlKit] },
     })
@@ -1495,7 +1551,7 @@ describe('FilterBuilder — custom type renderer dispatch', () => {
         ],
       },
     })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     // The fallback IS the string text input.
     expect(wrapper.find('input.dql-input--string').exists()).toBe(true)
     expect(warnSpy).toHaveBeenCalled()
@@ -1525,292 +1581,15 @@ describe('FilterBuilder — custom type renderer dispatch', () => {
         ],
       },
     })
-    mount(FilterBuilder, { props: { filter } })
+    mount(FilterPanel, { props: { filter } })
     expect(warnSpy).toHaveBeenCalledTimes(1)
   })
 })
 
-describe('FilterBuilder — popover-trigger variant', () => {
-  it('renders only the trigger button by default; panel appears on click', async () => {
-    const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'popover-trigger' },
-      attachTo: document.body,
-    })
-    const trigger = wrapper.find('[data-testid="popover-trigger"]')
-    expect(trigger.exists()).toBe(true)
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
-    expect(trigger.attributes('aria-expanded')).toBe('false')
-    expect(trigger.attributes('data-open')).toBe('false')
-
-    await trigger.trigger('click')
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
-    expect(trigger.attributes('aria-expanded')).toBe('true')
-    expect(trigger.attributes('data-open')).toBe('true')
-
-    // Click again to close.
-    await trigger.trigger('click')
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('button label reflects the current condition count', async () => {
-    const filter = useFilter({
-      schema,
-      sync: 'none',
-      initial: {
-        combinator: 'and',
-        children: [
-          { field: 'title', op: 'eq', value: 'a' },
-          { field: 'title', op: 'eq', value: 'b' },
-          { field: 'title', op: 'eq', value: 'c' },
-        ],
-      },
-    })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'popover-trigger' },
-    })
-    const trigger = wrapper.find('[data-testid="popover-trigger"]')
-    expect(trigger.text()).toBe('3 filters')
-    expect(trigger.attributes('data-condition-count')).toBe('3')
-
-    // Empty filter → 'Filter'
-    const emptyFilter = useFilter({ schema, sync: 'none' })
-    const empty = mount(FilterBuilder, {
-      props: { filter: emptyFilter, variant: 'popover-trigger' },
-    })
-    expect(empty.find('[data-testid="popover-trigger"]').text()).toBe('Filter')
-    empty.unmount()
-
-    // Exactly one filter → singular 'filter'.
-    const singleFilter = useFilter({
-      schema,
-      sync: 'none',
-      initial: {
-        combinator: 'and',
-        children: [{ field: 'title', op: 'eq', value: 'x' }],
-      },
-    })
-    const one = mount(FilterBuilder, {
-      props: { filter: singleFilter, variant: 'popover-trigger' },
-    })
-    expect(one.find('[data-testid="popover-trigger"]').text()).toBe('1 filter')
-    one.unmount()
-
-    wrapper.unmount()
-  })
-
-  it('Escape closes the panel', async () => {
-    const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'popover-trigger' },
-      attachTo: document.body,
-    })
-    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
-
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('clicking outside the panel closes it; clicking inside keeps it open', async () => {
-    const outside = document.createElement('div')
-    outside.setAttribute('data-testid', 'outside')
-    document.body.appendChild(outside)
-
-    const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'popover-trigger' },
-      attachTo: document.body,
-    })
-    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
-
-    // Click inside the panel — stays open.
-    const panel = wrapper.find('[data-testid="popover-panel"]').element as HTMLElement
-    panel.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(true)
-
-    // Click outside — closes.
-    outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
-
-    document.body.removeChild(outside)
-    wrapper.unmount()
-  })
-
-  it('listeners are torn down on unmount (no further close-on-Escape)', async () => {
-    const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'popover-trigger' },
-      attachTo: document.body,
-    })
-    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
-    wrapper.unmount()
-    // After unmount: dispatching Escape on document must not throw and
-    // must not affect any state (no panel exists anymore anyway).
-    expect(() =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })),
-    ).not.toThrow()
-  })
-
-  it('vertical-stack variant: builder is always visible (no trigger button)', () => {
-    const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'vertical-stack' },
-    })
-    expect(wrapper.find('[data-testid="popover-trigger"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="popover-panel"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="group"]').exists()).toBe(true)
-    expect(wrapper.attributes('data-variant')).toBe('vertical-stack')
-  })
-})
-
-describe('FilterBuilder — slot overrides', () => {
-  // Build a minimally-valid #operator slot that wraps the default in a
-  // span we can detect from tests.
-  const operatorSlot = {
-    operator: ({ defaultRender }: { defaultRender: () => unknown }) =>
-      h('span', { 'data-testid': 'operator-slot-wrap' }, [defaultRender() as VNode]),
-  }
-  const valueSlot = {
-    value: ({ value, setValue }: { value: unknown, setValue: (v: unknown) => void }) =>
-      h('input', {
-        type: 'text',
-        'data-testid': 'value-slot-input',
-        value: typeof value === 'string' ? value : '',
-        onInput: (e: Event) => setValue((e.target as HTMLInputElement).value),
-      }),
-  }
-  const conditionSlot = {
-    condition: ({
-      defaultField,
-      defaultOperator,
-      defaultValue,
-      remove,
-    }: {
-      defaultField: () => unknown
-      defaultOperator: () => unknown
-      defaultValue: () => unknown
-      remove: () => void
-    }) =>
-      h('div', { 'data-testid': 'condition-slot-shell' }, [
-        defaultField() as VNode,
-        defaultOperator() as VNode | null,
-        defaultValue() as VNode | null,
-        h(
-          'button',
-          {
-            type: 'button',
-            'data-testid': 'condition-slot-remove',
-            onClick: remove,
-          },
-          'remove',
-        ),
-      ] as Array<VNode | null>),
-  }
-
-  it('#operator slot wraps the default operator select in vertical-stack', () => {
-    const filter = useFilter({
-      schema,
-      sync: 'none',
-      initial: {
-        combinator: 'and',
-        children: [{ field: 'title', op: 'eq', value: 'a' }],
-      },
-    })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'vertical-stack' },
-      slots: operatorSlot,
-    })
-    expect(wrapper.find('[data-testid="operator-slot-wrap"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="op-select"]').exists()).toBe(true)
-  })
-
-  it('#value slot replaces the value renderer and its setValue updates valid AST', async () => {
-    const filter = useFilter({
-      schema,
-      sync: 'none',
-      initial: {
-        combinator: 'and',
-        children: [{ field: 'title', op: 'eq', value: '' }],
-      },
-    })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'vertical-stack' },
-      slots: valueSlot,
-    })
-    const slotInput = wrapper.find('[data-testid="value-slot-input"]')
-    expect(slotInput.exists()).toBe(true)
-    // Default StringInput should NOT be in the tree (slot replaced it).
-    expect(wrapper.find('input.dql-input--string').exists()).toBe(false)
-    await slotInput.setValue('via-slot')
-    expect(filter.valid.value.children[0]).toEqual({
-      field: 'title',
-      op: 'eq',
-      value: 'via-slot',
-    })
-  })
-
-  it('#condition slot replaces the entire row but defaults can still be invoked', async () => {
-    const filter = useFilter({
-      schema,
-      sync: 'none',
-      initial: {
-        combinator: 'and',
-        children: [{ field: 'title', op: 'eq', value: 'a' }],
-      },
-    })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'vertical-stack' },
-      slots: conditionSlot,
-    })
-    expect(wrapper.find('[data-testid="condition-slot-shell"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="field-select"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="op-select"]').exists()).toBe(true)
-    // Default remove button is suppressed (slot replaced it); the slot's
-    // remove button drives the action surface.
-    expect(wrapper.find('[data-testid="remove-condition"]').exists()).toBe(false)
-    await wrapper.find('[data-testid="condition-slot-remove"]').trigger('click')
-    expect(filter.valid.value.children).toHaveLength(0)
-  })
-
-  it('slot overrides work identically inside popover-trigger panel', async () => {
-    const filter = useFilter({
-      schema,
-      sync: 'none',
-      initial: {
-        combinator: 'and',
-        children: [{ field: 'title', op: 'eq', value: '' }],
-      },
-    })
-    const wrapper = mount(FilterBuilder, {
-      props: { filter, variant: 'popover-trigger' },
-      slots: valueSlot,
-      attachTo: document.body,
-    })
-    await wrapper.find('[data-testid="popover-trigger"]').trigger('click')
-    const slotInput = wrapper.find('[data-testid="value-slot-input"]')
-    expect(slotInput.exists()).toBe(true)
-    expect(wrapper.find('input.dql-input--string').exists()).toBe(false)
-    await slotInput.setValue('inside-popover')
-    expect(filter.valid.value.children[0]).toEqual({
-      field: 'title',
-      op: 'eq',
-      value: 'inside-popover',
-    })
-    wrapper.unmount()
-  })
-})
-
-describe('FilterBuilder — dropped[] schema-evolution notice', () => {
+describe('FilterPanel — dropped[] schema-evolution notice', () => {
   it('hides the notice when dropped is empty', () => {
     const filter = useFilter({ schema, sync: 'none' })
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="dropped-notice"]').exists()).toBe(false)
   })
 
@@ -1822,7 +1601,7 @@ describe('FilterBuilder — dropped[] schema-evolution notice', () => {
       { path: [0], reason: 'unknown_field', detail: { field: 'mystery' } },
       { path: [1], reason: 'value_type_mismatch', detail: { field: 'rating' } },
     ]
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     const notice = wrapper.find('[data-testid="dropped-notice"]')
     expect(notice.exists()).toBe(true)
     expect(notice.attributes('role')).toBe('alert')
@@ -1839,7 +1618,7 @@ describe('FilterBuilder — dropped[] schema-evolution notice', () => {
     filter.dropped.value = [
       { path: [0], reason: 'unknown_field' },
     ]
-    const wrapper = mount(FilterBuilder, { props: { filter } })
+    const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="dropped-notice"]').attributes('data-dropped-count')).toBe('1')
     filter.dropped.value = [
       { path: [0], reason: 'unknown_field' },
