@@ -1598,8 +1598,8 @@ describe('FilterPanel — dropped[] schema-evolution notice', () => {
     // Force-populate the dropped surface (the URL flow normally drives this;
     // for unit-level rendering we mutate it directly).
     filter.dropped.value = [
-      { path: [0], reason: 'unknown_field', detail: { field: 'mystery' } },
-      { path: [1], reason: 'value_type_mismatch', detail: { field: 'rating' } },
+      { path: [0], code: 'unknown_field', field: 'mystery' },
+      { path: [1], code: 'value_type_mismatch', expected: 'number', got: 'string' },
     ]
     const wrapper = mount(FilterPanel, { props: { filter } })
     const notice = wrapper.find('[data-testid="dropped-notice"]')
@@ -1616,14 +1616,14 @@ describe('FilterPanel — dropped[] schema-evolution notice', () => {
   it('updates the count when dropped is mutated externally', async () => {
     const filter = useFilter({ schema, sync: 'none' })
     filter.dropped.value = [
-      { path: [0], reason: 'unknown_field' },
+      { path: [0], code: 'unknown_field', field: 'mystery' },
     ]
     const wrapper = mount(FilterPanel, { props: { filter } })
     expect(wrapper.find('[data-testid="dropped-notice"]').attributes('data-dropped-count')).toBe('1')
     filter.dropped.value = [
-      { path: [0], reason: 'unknown_field' },
-      { path: [1], reason: 'op_not_allowed' },
-      { path: [2], reason: 'value_type_mismatch' },
+      { path: [0], code: 'unknown_field', field: 'mystery' },
+      { path: [1], code: 'op_not_allowed', field: 'title', op: 'gt' },
+      { path: [2], code: 'value_type_mismatch', expected: 'number', got: 'string' },
     ]
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="dropped-notice"]').attributes('data-dropped-count')).toBe('3')

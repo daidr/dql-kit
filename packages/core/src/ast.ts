@@ -6,19 +6,14 @@ import {
   type DraftGroup,
   type DraftNode,
   type FilterSchema,
-  type NodePath,
+  type ParseError,
   type ValidAST,
   type ValidCondition,
   type ValidGroup,
   type ValidNode,
   type ValidationError,
 } from './types.ts'
-import {
-  checkShape,
-  checkValueType,
-  expectedTypeLabel,
-  observedTypeLabel,
-} from './check.ts'
+import { LONG_KEYS, walkAst } from './parse.ts'
 
 export const emptyAst = (): ValidAST => ({ combinator: 'and', children: [] })
 
@@ -29,116 +24,30 @@ export const isCondition = (
 ): n is DraftCondition | ValidCondition =>
   n != null && typeof n === 'object' && 'field' in n
 
-// One-shot per-condition analysis. Produces:
-//  - the pruned ValidCondition if all checks pass (else null);
-//  - the ValidationError if a check failed (else null).
-// Both being non-null is impossible — the first failed check returns
-// null + the error; success returns the condition + null.
-const analyzeCondition = (
-  cond: DraftCondition,
-  schema: FilterSchema,
-  path: NodePath,
-): { valid: ValidCondition | null, error: ValidationError | null } => {
-  if (cond.field == null) {
-    return { valid: null, error: { path, code: 'incomplete', missing: 'field' } }
-  }
-  const field = schema.fields[cond.field]
-  if (!field) {
-    return { valid: null, error: { path, code: 'unknown_field', field: cond.field } }
-  }
-  if (cond.op == null) {
-    return { valid: null, error: { path, code: 'incomplete', missing: 'op' } }
-  }
-  const op = field.ops.find((o) => o.name === cond.op)
-  if (!op) {
-    return {
-      valid: null,
-      error: { path, code: 'op_not_allowed', field: cond.field, op: cond.op },
-    }
-  }
-  if (op.valueShape === 'none') {
-    // Lenient prune semantics: a stray value on a `none`-shape op is
-    // normalised away rather than dropping the whole condition. We
-    // still report a `value_shape_mismatch` so explicit `validate`
-    // surfaces the schema/draft mismatch — the executable AST and the
-    // error list are independent.
-    if (cond.value !== undefined) {
-      return {
-        valid: { field: cond.field, op: cond.op, value: undefined },
-        error: { path, code: 'value_shape_mismatch', op: cond.op, expected: 'none' },
-      }
-    }
-    return {
-      valid: { field: cond.field, op: cond.op, value: undefined },
-      error: null,
-    }
-  }
-  if (cond.value === undefined) {
-    return { valid: null, error: { path, code: 'incomplete', missing: 'value' } }
-  }
-  if (!checkShape(cond.value, op.valueShape)) {
-    return {
-      valid: null,
-      error: { path, code: 'value_shape_mismatch', op: cond.op, expected: op.valueShape },
-    }
-  }
-  if (!checkValueType(field, op.valueShape, cond.value)) {
-    return {
-      valid: null,
-      error: {
-        path,
-        code: 'value_type_mismatch',
-        expected: expectedTypeLabel(field),
-        got: observedTypeLabel(cond.value),
-      },
-    }
-  }
-  return {
-    valid: { field: cond.field, op: cond.op, value: cond.value },
-    error: null,
-  }
-}
-
-const analyzeNode = (
-  node: DraftNode,
-  schema: FilterSchema,
-  path: NodePath,
-  errors: ValidationError[],
-  isRoot: boolean,
-): ValidNode | null => {
-  if (isGroup(node)) {
-    const group = node as DraftGroup
-    const children: ValidNode[] = []
-    group.children.forEach((child, i) => {
-      const pruned = analyzeNode(child, schema, [...path, i], errors, false)
-      if (pruned !== null) children.push(pruned)
-    })
-    if (!isRoot) {
-      if (children.length === 0) return null
-      if (children.length === 1) return children[0]!
-    }
-    return { combinator: group.combinator, children } as ValidGroup
-  }
-  const { valid, error } = analyzeCondition(node as DraftCondition, schema, path)
-  if (error) errors.push(error)
-  return valid
-}
+const isValidationError = (e: ParseError): e is ValidationError =>
+  e.code === 'unknown_field'
+  || e.code === 'op_not_allowed'
+  || e.code === 'value_type_mismatch'
+  || e.code === 'value_shape_mismatch'
+  || e.code === 'incomplete'
 
 /**
  * Single-walk analyzer: produces both the pruned ValidAST and the list
  * of ValidationErrors at once. `prune` and `validate` are thin wrappers
  * around this — prefer `analyze` directly when you need both.
+ *
+ * Shares its walker with `parseAst` and `fromUrl`, minus the size
+ * limits: a draft is built by this process's own UI. Structural
+ * problems a well-typed draft can't have (non-object nodes and the
+ * like) are pruned without an error; use `parseAst` for input whose
+ * shape isn't guaranteed by the type system.
  */
 export const analyze = (
   draft: DraftAST,
   schema: FilterSchema,
 ): Analysis => {
-  const errors: ValidationError[] = []
-  const result = analyzeNode(draft, schema, [], errors, true)
-  if (result === null || !isGroup(result)) {
-    return { ast: emptyAst(), errors }
-  }
-  return { ast: result as ValidAST, errors }
+  const { ast, errors } = walkAst(draft, schema, { keys: LONG_KEYS, limits: null })
+  return { ast, errors: errors.filter(isValidationError) }
 }
 
 export const prune = (draft: DraftAST, schema: FilterSchema): ValidAST =>

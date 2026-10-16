@@ -5,7 +5,7 @@ import { mount } from '@vue/test-utils'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/pglite'
 import { integer, pgTable, serial, text } from 'drizzle-orm/pg-core'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { createDqlKit, useFilter } from '@dql-kit/vue-headless'
 import { FilterPanel } from '../src/index.ts'
@@ -383,8 +383,8 @@ describe('end-to-end: schema evolution dropped[] flow', () => {
     const decoded = fromUrl(oldUrl, newSchema)
     expect(decoded.dropped).toHaveLength(1)
     expect(decoded.dropped[0]).toMatchObject({
-      reason: 'unknown_field',
-      detail: { field: 'legacyTag' },
+      code: 'unknown_field',
+      field: 'legacyTag',
     })
     void oldSchema // referenced for documentation; the encoder is the contract.
 

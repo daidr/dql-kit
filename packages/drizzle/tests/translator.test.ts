@@ -1,4 +1,11 @@
-import { defineFilterSchema, f, type ValidAST } from '@dql-kit/core'
+import {
+  builtinOps,
+  defineFilterSchema,
+  f,
+  parseAst,
+  type CheckedAST,
+  type ValidAST,
+} from '@dql-kit/core'
 import { PGlite } from '@electric-sql/pglite'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/pglite'
@@ -13,6 +20,11 @@ import {
 } from 'drizzle-orm/pg-core'
 import { beforeAll, describe, expect, test } from 'vitest'
 import { createDrizzleTranslator } from '../src/index.ts'
+
+// These tests exercise SQL semantics on hand-built ASTs, so they skip
+// parseAst and assert the brand directly. Tests that cover the parse →
+// translate boundary call parseAst.
+const checked = (ast: ValidAST): CheckedAST => ast as CheckedAST
 
 const articles = pgTable('articles', {
   id: serial('id').primaryKey(),
@@ -87,7 +99,7 @@ describe('createDrizzleTranslator — SQL execution', () => {
 
   test('empty AST → matches all rows', async () => {
     const t = createDrizzleTranslator({ schema, table: articles })
-    const rows = await db.select().from(articles).where(t.toWhere({ combinator: 'and', children: [] }))
+    const rows = await db.select().from(articles).where(t.toWhere(checked({ combinator: 'and', children: [] })))
     expect(rows).toHaveLength(3)
   })
 
@@ -97,7 +109,7 @@ describe('createDrizzleTranslator — SQL execution', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'eq', value: 'hello' }],
     }
-    const rows = await db.select().from(articles).where(t.toWhere(ast))
+    const rows = await db.select().from(articles).where(t.toWhere(checked(ast)))
     expect(rows.map((r) => r.title).sort()).toEqual(['hello', 'hello'])
   })
 
@@ -110,7 +122,7 @@ describe('createDrizzleTranslator — SQL execution', () => {
         { field: 'rating', op: 'gt', value: 3 },
       ],
     }
-    const rows = await db.select().from(articles).where(t.toWhere(ast))
+    const rows = await db.select().from(articles).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.rating).toBe(4)
   })
@@ -124,7 +136,7 @@ describe('createDrizzleTranslator — SQL execution', () => {
         { field: 'rating', op: 'eq', value: 3 },
       ],
     }
-    const rows = await db.select().from(articles).where(t.toWhere(ast))
+    const rows = await db.select().from(articles).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
   })
 
@@ -134,30 +146,87 @@ describe('createDrizzleTranslator — SQL execution', () => {
       combinator: 'and',
       children: [{ field: 'rating', op: 'between', value: [4, 5] }],
     }
-    const rows = await db.select().from(articles).where(t.toWhere(ast))
+    const rows = await db.select().from(articles).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
   })
 
   test('custom op via the ops option wires into toWhere', async () => {
+    const customSchema = defineFilterSchema({
+      fields: {
+        title: f.string(),
+        rating: f.number().withOps([{ name: 'isFortyTwo', valueShape: 'none', label: '= 42' }]),
+      },
+    })
     const t = createDrizzleTranslator({
-      schema,
+      schema: customSchema,
       table: articles,
       ops: { isFortyTwo: (col) => sql`${col} = 42` },
     })
-    const ast: ValidAST = {
-      combinator: 'and',
-      children: [{ field: 'rating', op: 'isFortyTwo', value: undefined }],
-    }
-    expect(() => t.toWhere(ast)).not.toThrow()
+    const r = parseAst(
+      { combinator: 'and', children: [{ field: 'rating', op: 'isFortyTwo' }] },
+      customSchema,
+    )
+    if (!r.ok) throw new Error('expected ok')
+    expect(() => t.toWhere(r.ast)).not.toThrow()
   })
 
   test('AST referencing op without translator throws helpfully', async () => {
+    const customSchema = defineFilterSchema({
+      fields: {
+        title: f.string(),
+        rating: f.number().withOps([{ name: 'noSuchOp', valueShape: 'single', label: '?' }]),
+      },
+    })
+    const t = createDrizzleTranslator({ schema: customSchema, table: articles })
+    const r = parseAst(
+      { combinator: 'and', children: [{ field: 'rating', op: 'noSuchOp', value: 1 }] },
+      customSchema,
+    )
+    if (!r.ok) throw new Error('expected ok')
+    expect(() => t.toWhere(r.ast)).toThrow(/No SQL translator registered for op "noSuchOp"/)
+  })
+
+  test('parseAst output translates and runs', async () => {
     const t = createDrizzleTranslator({ schema, table: articles })
-    const ast: ValidAST = {
+    const r = parseAst(
+      {
+        combinator: 'or',
+        children: [
+          { field: 'title', op: 'eq', value: 'world' },
+          { combinator: 'and', children: [{ field: 'rating', op: 'eq', value: 3 }] },
+        ],
+      },
+      schema,
+    )
+    if (!r.ok) throw new Error('expected ok')
+    const rows = await db.select().from(articles).where(t.toWhere(r.ast))
+    expect(rows).toHaveLength(2)
+  })
+
+  test('an op the field does not declare is refused even if the brand is forged', () => {
+    const t = createDrizzleTranslator({ schema, table: articles })
+    // `contains` has a handler, but `rating` (a number) doesn't declare it:
+    // without the check it would emit `rating ILIKE '%x%'`.
+    const forged = {
       combinator: 'and',
-      children: [{ field: 'rating', op: 'noSuchOp', value: 1 }],
-    }
-    expect(() => t.toWhere(ast)).toThrow(/No SQL translator registered for op "noSuchOp"/)
+      children: [{ field: 'rating', op: 'contains', value: 'x' }],
+    } as unknown as CheckedAST
+    expect(() => t.toWhere(forged)).toThrow(/Op "contains" is not allowed on field "rating"/)
+    expect(parseAst(forged, schema).ok).toBe(false)
+  })
+
+  test('prototype property names are not treated as ops or fields', () => {
+    const t = createDrizzleTranslator({ schema, table: articles })
+    const forgedOp = {
+      combinator: 'and',
+      children: [{ field: 'rating', op: 'constructor', value: 1 }],
+    } as unknown as CheckedAST
+    expect(() => t.toWhere(forgedOp)).toThrow(/not allowed/)
+    const forgedField = {
+      combinator: 'and',
+      children: [{ field: 'constructor', op: 'eq', value: 1 }],
+    } as unknown as CheckedAST
+    expect(() => t.toWhere(forgedField)).toThrow()
   })
 })
 
@@ -219,7 +288,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'contains', value: 'hello' }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     expect(titlesOf(rows)).toEqual(['Hello World', 'hello'])
   })
 
@@ -229,7 +298,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'notContains', value: 'foo' }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     // Postgres: NOT ILIKE on NULL evaluates to NULL, so NULL rows are excluded.
     // 'foo%bar' / 'foo_bar' / 'foo\bar' are all foo-prefixed → excluded.
     // '', 'hello', 'Hello World', 'world' remain.
@@ -242,7 +311,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'startsWith', value: 'hello' }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     expect(titlesOf(rows)).toEqual(['Hello World', 'hello'])
   })
 
@@ -252,7 +321,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'endsWith', value: 'world' }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     expect(titlesOf(rows)).toEqual(['Hello World', 'world'])
   })
 
@@ -262,7 +331,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'isEmpty', value: undefined }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
     expect(rows.every((r) => r.title === null || r.title === '')).toBe(true)
   })
@@ -273,7 +342,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'notEmpty', value: undefined }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     // 8 fixtures - 2 (NULL + '') = 6 surviving rows.
     expect(rows.every((r) => typeof r.title === 'string' && r.title.length > 0)).toBe(true)
     expect(titlesOf(rows)).toEqual(['Hello World', 'foo%bar', 'foo\\bar', 'foo_bar', 'hello', 'world'])
@@ -285,7 +354,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'in', value: ['hello', 'world'] }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     expect(titlesOf(rows)).toEqual(['hello', 'world'])
   })
 
@@ -295,7 +364,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'notIn', value: ['hello', 'world', 'Hello World'] }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     // NULL rows are excluded by NOT IN per PG semantics; '', and the three
     // foo-prefixed rows survive.
     expect(titlesOf(rows)).toEqual(['', 'foo%bar', 'foo\\bar', 'foo_bar'])
@@ -317,7 +386,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op, value: needle }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     expect(titlesOf(rows)).toEqual(expected)
   })
 
@@ -329,7 +398,7 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       combinator: 'and',
       children: [{ field: 'title', op: 'contains', value: '' }],
     }
-    const rows = await db.select().from(stringOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
     expect(rows.every((r) => r.title !== null)).toBe(true)
     expect(rows).toHaveLength(7)
   })
@@ -374,7 +443,7 @@ describe('createDrizzleTranslator — full number op coverage', () => {
       combinator: 'and',
       children: [{ field: 'rating', op: 'eq', value: 3 }],
     }
-    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(checked(ast)))
     expect(ratingsOf(rows)).toEqual([3])
   })
 
@@ -384,7 +453,7 @@ describe('createDrizzleTranslator — full number op coverage', () => {
       combinator: 'and',
       children: [{ field: 'rating', op: 'neq', value: 3 }],
     }
-    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(checked(ast)))
     expect(ratingsOf(rows)).toEqual([1, 2, 4, 5])
   })
 
@@ -399,7 +468,7 @@ describe('createDrizzleTranslator — full number op coverage', () => {
       combinator: 'and',
       children: [{ field: 'rating', op, value: pivot }],
     }
-    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(checked(ast)))
     expect(ratingsOf(rows)).toEqual(expected)
   })
 
@@ -409,7 +478,7 @@ describe('createDrizzleTranslator — full number op coverage', () => {
       combinator: 'and',
       children: [{ field: 'rating', op: 'between', value: [2, 4] }],
     }
-    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(checked(ast)))
     expect(ratingsOf(rows)).toEqual([2, 3, 4])
   })
 
@@ -419,7 +488,7 @@ describe('createDrizzleTranslator — full number op coverage', () => {
       combinator: 'and',
       children: [{ field: 'rating', op: 'between', value: [4, 2] }],
     }
-    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(0)
   })
 
@@ -429,7 +498,7 @@ describe('createDrizzleTranslator — full number op coverage', () => {
       combinator: 'and',
       children: [{ field: 'rating', op: 'in', value: [1, 3, 5] }],
     }
-    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(checked(ast)))
     expect(ratingsOf(rows)).toEqual([1, 3, 5])
   })
 
@@ -442,7 +511,7 @@ describe('createDrizzleTranslator — full number op coverage', () => {
         { field: 'rating', op: 'eq', value: 5 },
       ],
     }
-    const rows = await db.select().from(numberOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(numberOpsTable).where(t.toWhere(checked(ast)))
     expect(ratingsOf(rows)).toEqual([1, 2, 5])
   })
 })
@@ -495,7 +564,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       combinator: 'and',
       children: [{ field: 'isActive', op: 'eq', value: true }],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(3)
     expect(rows.every((r) => r.isActive === true)).toBe(true)
   })
@@ -506,7 +575,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       combinator: 'and',
       children: [{ field: 'isActive', op: 'eq', value: false }],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
     expect(rows.every((r) => r.isActive === false)).toBe(true)
   })
@@ -517,7 +586,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       combinator: 'and',
       children: [{ field: 'status', op: 'eq', value: 'published' }],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
     expect(rows.every((r) => r.status === 'published')).toBe(true)
   })
@@ -528,7 +597,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       combinator: 'and',
       children: [{ field: 'status', op: 'neq', value: 'archived' }],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(4)
     expect(rows.every((r) => r.status !== 'archived')).toBe(true)
   })
@@ -539,7 +608,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       combinator: 'and',
       children: [{ field: 'status', op: 'in', value: ['draft', 'archived'] }],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(3)
     expect(rows.every((r) => r.status === 'draft' || r.status === 'archived')).toBe(true)
   })
@@ -550,7 +619,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       combinator: 'and',
       children: [{ field: 'status', op: 'notIn', value: ['draft'] }],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(3)
     expect(rows.every((r) => r.status !== 'draft')).toBe(true)
   })
@@ -561,7 +630,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       combinator: 'and',
       children: [{ field: 'priority', op: 'eq', value: 2 }],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.priority).toBe(2)
   })
@@ -572,20 +641,20 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
       .select()
       .from(enumOpsTable)
       .where(
-        t.toWhere({
+        t.toWhere(checked({
           combinator: 'and',
           children: [{ field: 'priority', op: 'in', value: [0, 2] }],
-        }),
+        })),
       )
     expect(inRows).toHaveLength(3)
     const notInRows = await db
       .select()
       .from(enumOpsTable)
       .where(
-        t.toWhere({
+        t.toWhere(checked({
           combinator: 'and',
           children: [{ field: 'priority', op: 'notIn', value: [1] }],
-        }),
+        })),
       )
     expect(notInRows).toHaveLength(3)
     expect(notInRows.every((r) => r.priority !== 1)).toBe(true)
@@ -600,7 +669,7 @@ describe('createDrizzleTranslator — boolean + enum op coverage', () => {
         { field: 'status', op: 'in', value: ['draft', 'published'] },
       ],
     }
-    const rows = await db.select().from(enumOpsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(enumOpsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(3)
     expect(rows.every((r) => r.isActive && (r.status === 'draft' || r.status === 'published'))).toBe(true)
   })
@@ -653,7 +722,7 @@ describe('createDrizzleTranslator — date / datetime / inLast op coverage', () 
       combinator: 'and',
       children: [{ field: 'eventDate', op: 'eq', value: '2026-05-01' }],
     }
-    const rows = await db.select().from(events).where(t.toWhere(ast))
+    const rows = await db.select().from(events).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.eventDate).toBe('2026-05-01')
   })
@@ -664,7 +733,7 @@ describe('createDrizzleTranslator — date / datetime / inLast op coverage', () 
       combinator: 'and',
       children: [{ field: 'eventDate', op: 'before', value: '2026-05-01' }],
     }
-    const rows = await db.select().from(events).where(t.toWhere(ast))
+    const rows = await db.select().from(events).where(t.toWhere(checked(ast)))
     expect(rows.map((r) => r.eventDate)).toEqual(['2026-01-01'])
   })
 
@@ -674,7 +743,7 @@ describe('createDrizzleTranslator — date / datetime / inLast op coverage', () 
       combinator: 'and',
       children: [{ field: 'eventDate', op: 'after', value: '2026-05-15' }],
     }
-    const rows = await db.select().from(events).where(t.toWhere(ast))
+    const rows = await db.select().from(events).where(t.toWhere(checked(ast)))
     expect(rows.map((r) => r.eventDate)).toEqual(['2026-06-01'])
   })
 
@@ -686,7 +755,7 @@ describe('createDrizzleTranslator — date / datetime / inLast op coverage', () 
         { field: 'eventDate', op: 'between', value: ['2026-05-01', '2026-05-15'] },
       ],
     }
-    const rows = await db.select().from(events).where(t.toWhere(ast))
+    const rows = await db.select().from(events).where(t.toWhere(checked(ast)))
     expect(rows.map((r) => r.eventDate).sort()).toEqual(['2026-05-01', '2026-05-15'])
   })
 
@@ -696,7 +765,7 @@ describe('createDrizzleTranslator — date / datetime / inLast op coverage', () 
       combinator: 'and',
       children: [{ field: 'occurredAt', op: 'before', value: '2026-05-15T00:00:00Z' }],
     }
-    const rows = await db.select().from(events).where(t.toWhere(ast))
+    const rows = await db.select().from(events).where(t.toWhere(checked(ast)))
     // Occurred 2026-01-01T00:00:00Z and 2026-05-01T08:00:00Z are before 2026-05-15.
     expect(rows).toHaveLength(2)
   })
@@ -713,8 +782,8 @@ describe('createDrizzleTranslator — date / datetime / inLast op coverage', () 
       combinator: 'and',
       children: [{ field: 'occurredAt', op: 'before', value: '2026-05-15T20:30:00+08:00' }],
     }
-    const utcRows = await db.select().from(events).where(t.toWhere(utcAst))
-    const cstRows = await db.select().from(events).where(t.toWhere(cstAst))
+    const utcRows = await db.select().from(events).where(t.toWhere(checked(utcAst)))
+    const cstRows = await db.select().from(events).where(t.toWhere(checked(cstAst)))
     expect(utcRows.map((r) => r.id).sort()).toEqual(cstRows.map((r) => r.id).sort())
     expect(utcRows).toHaveLength(2)
   })
@@ -731,7 +800,7 @@ describe('createDrizzleTranslator — date / datetime / inLast op coverage', () 
         },
       ],
     }
-    const rows = await db.select().from(events).where(t.toWhere(ast))
+    const rows = await db.select().from(events).where(t.toWhere(checked(ast)))
     // The two May rows are inside the range; the Jan row is before, the Jun
     // row is just after. PG returns its native timestamptz string format
     // (e.g. '2026-05-01 08:00:00+00'), so assert via instant comparison
@@ -786,7 +855,7 @@ describe('createDrizzleTranslator — inLast (relative shape)', () => {
       combinator: 'and',
       children: [{ field: 'occurredAt', op: 'inLast', value }],
     }
-    const rows = await db.select().from(events).where(t.toWhere(ast))
+    const rows = await db.select().from(events).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(expected)
   })
 
@@ -802,7 +871,7 @@ describe('createDrizzleTranslator — inLast (relative shape)', () => {
         },
       ],
     }
-    expect(() => t.toWhere(ast)).toThrow(/unit must be one of/)
+    expect(() => t.toWhere(checked(ast))).toThrow(/unit must be one of/)
   })
 
   test('inLast throws on a non-positive amount (defence-in-depth)', () => {
@@ -813,7 +882,7 @@ describe('createDrizzleTranslator — inLast (relative shape)', () => {
         { field: 'occurredAt', op: 'inLast', value: { amount: 0, unit: 'day' } },
       ],
     }
-    expect(() => t.toWhere(ast)).toThrow(/amount must be a positive finite number/)
+    expect(() => t.toWhere(checked(ast))).toThrow(/amount must be a positive finite number/)
   })
 })
 
@@ -853,7 +922,9 @@ describe('createDrizzleTranslator — datetime against mode:date columns', () =>
 
   const dtSchema = defineFilterSchema({
     fields: {
-      occurredAt: f.datetime(),
+      // eq / in aren't datetime ops by default; declared here so the
+      // coercion in their handlers is covered on mode:date columns.
+      occurredAt: f.datetime().withOps([builtinOps.eq, builtinOps.in]),
       createdAt: f.datetime(),
     },
   })
@@ -864,7 +935,7 @@ describe('createDrizzleTranslator — datetime against mode:date columns', () =>
       combinator: 'and',
       children: [{ field: 'occurredAt', op: 'before', value: '2026-05-15T00:00:00.000Z' }],
     }
-    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
   })
 
@@ -880,7 +951,7 @@ describe('createDrizzleTranslator — datetime against mode:date columns', () =>
         },
       ],
     }
-    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
   })
 
@@ -890,7 +961,7 @@ describe('createDrizzleTranslator — datetime against mode:date columns', () =>
       combinator: 'and',
       children: [{ field: 'occurredAt', op: 'eq', value: '2026-05-01T08:00:00.000Z' }],
     }
-    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
   })
 
@@ -904,7 +975,7 @@ describe('createDrizzleTranslator — datetime against mode:date columns', () =>
         value: ['2026-05-01T08:00:00.000Z', '2026-05-15T12:30:00.000Z'],
       }],
     }
-    const rows = await db.select().from(eventsDateMode).where(t.toWhere(ast))
+    const rows = await db.select().from(eventsDateMode).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
   })
 })
@@ -950,7 +1021,7 @@ describe('createDrizzleTranslator — id<T> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'authorId', op: 'eq', value: 1 }],
     }
-    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
     expect(rows.every((r) => r.authorId === 1)).toBe(true)
   })
@@ -961,7 +1032,7 @@ describe('createDrizzleTranslator — id<T> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'authorId', op: 'neq', value: 1 }],
     }
-    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(3)
     expect(rows.every((r) => r.authorId !== 1)).toBe(true)
   })
@@ -972,7 +1043,7 @@ describe('createDrizzleTranslator — id<T> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'authorId', op: 'in', value: [2, 4] }],
     }
-    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(checked(ast)))
     expect(rows.map((r) => r.authorId).sort()).toEqual([2, 4])
   })
 
@@ -982,7 +1053,7 @@ describe('createDrizzleTranslator — id<T> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'authorId', op: 'notIn', value: [1] }],
     }
-    const rows = await db.select().from(articleAuthors).where(t.toWhere(ast))
+    const rows = await db.select().from(articleAuthors).where(t.toWhere(checked(ast)))
     expect(rows.map((r) => r.authorId).sort()).toEqual([2, 3, 4])
   })
 })
@@ -1030,7 +1101,7 @@ describe('createDrizzleTranslator — array<U> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'tags', op: 'contains', value: 'urgent' }],
     }
-    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
     expect(rows.every((r) => r.tags.includes('urgent'))).toBe(true)
   })
@@ -1041,7 +1112,7 @@ describe('createDrizzleTranslator — array<U> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'tags', op: 'notContains', value: 'urgent' }],
     }
-    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(checked(ast)))
     expect(rows.every((r) => !r.tags.includes('urgent'))).toBe(true)
     // Three rows: ['blue','green'], ['archive'], []
     expect(rows).toHaveLength(3)
@@ -1053,7 +1124,7 @@ describe('createDrizzleTranslator — array<U> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'tags', op: 'containsAll', value: ['urgent', 'green'] }],
     }
-    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(checked(ast)))
     // Only the row with both 'urgent' and 'green'.
     expect(rows).toHaveLength(1)
     expect(rows[0]?.tags.sort()).toEqual(['green', 'red', 'urgent'])
@@ -1065,7 +1136,7 @@ describe('createDrizzleTranslator — array<U> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'tags', op: 'containsAll', value: [] }],
     }
-    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(5)
   })
 
@@ -1075,7 +1146,7 @@ describe('createDrizzleTranslator — array<U> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'tags', op: 'isEmpty', value: undefined }],
     }
-    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.tags).toEqual([])
   })
@@ -1086,7 +1157,7 @@ describe('createDrizzleTranslator — array<U> op coverage', () => {
       combinator: 'and',
       children: [{ field: 'tags', op: 'notEmpty', value: undefined }],
     }
-    const rows = await db.select().from(articleTagsTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleTagsTable).where(t.toWhere(checked(ast)))
     // 5 fixtures - 1 (empty) = 4 surviving rows.
     expect(rows).toHaveLength(4)
     expect(rows.every((r) => r.tags.length > 0)).toBe(true)
@@ -1132,7 +1203,7 @@ describe('createDrizzleTranslator — array<number> coverage', () => {
       combinator: 'and',
       children: [{ field: 'scores', op: 'contains', value: 5 }],
     }
-    const rows = await db.select().from(articleScoresTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleScoresTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.scores).toEqual([5, 5, 5])
   })
@@ -1143,7 +1214,7 @@ describe('createDrizzleTranslator — array<number> coverage', () => {
       combinator: 'and',
       children: [{ field: 'scores', op: 'containsAll', value: [2, 4] }],
     }
-    const rows = await db.select().from(articleScoresTable).where(t.toWhere(ast))
+    const rows = await db.select().from(articleScoresTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.scores).toEqual([2, 4, 6])
   })
@@ -1211,7 +1282,7 @@ describe('createDrizzleTranslator — nested group parenthesisation', () => {
         { field: 'status', op: 'eq', value: 'draft' },
       ],
     }
-    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    const rows = await db.select().from(nestedTable).where(t.toWhere(checked(ast)))
     // Only ('alpha', 2, 'draft') satisfies the tree: title=alpha AND status=draft.
     // (No row with rating>5 has status=draft.)
     expect(rows).toHaveLength(1)
@@ -1239,7 +1310,7 @@ describe('createDrizzleTranslator — nested group parenthesisation', () => {
         },
       ],
     }
-    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    const rows = await db.select().from(nestedTable).where(t.toWhere(checked(ast)))
     // Matches:
     //   alpha + 8 + published (alpha AND rating>5)
     //   gamma + 1 + archived  (status=archived AND rating<5)
@@ -1269,7 +1340,7 @@ describe('createDrizzleTranslator — nested group parenthesisation', () => {
         },
       ],
     }
-    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    const rows = await db.select().from(nestedTable).where(t.toWhere(checked(ast)))
     // Drafts are: ('alpha', 2), ('beta', 3). Both match.
     expect(rows.map((r) => r.title).sort()).toEqual(['alpha', 'beta'])
   })
@@ -1285,7 +1356,7 @@ describe('createDrizzleTranslator — nested group parenthesisation', () => {
         { combinator: 'or', children: [] }, // empty inner group -> sql\`true\`
       ],
     }
-    const rows = await db.select().from(nestedTable).where(t.toWhere(ast))
+    const rows = await db.select().from(nestedTable).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(2)
     expect(rows.every((r) => r.status === 'draft')).toBe(true)
   })
@@ -1361,7 +1432,7 @@ describe('createDrizzleTranslator — custom op via registerOp', () => {
         },
       ],
     }
-    const rows = await db.select().from(moneyArticles).where(t.toWhere(ast))
+    const rows = await db.select().from(moneyArticles).where(t.toWhere(checked(ast)))
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ priceAmount: 2500, priceCurrency: 'USD' })
   })
@@ -1378,6 +1449,6 @@ describe('createDrizzleTranslator — custom op via registerOp', () => {
         { field: 'price', op: 'moneyEq', value: { amount: 1, currency: 'USD' } },
       ],
     }
-    expect(() => t.toWhere(ast)).toThrow(/No SQL translator registered for op "moneyEq"/)
+    expect(() => t.toWhere(checked(ast))).toThrow(/No SQL translator registered for op "moneyEq"/)
   })
 })

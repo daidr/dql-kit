@@ -72,7 +72,7 @@ describe('FilterButton — default render', () => {
   it('exposes a warning indicator when dropped[] is non-empty', async () => {
     const filter = useFilter({ schema, sync: 'none' })
     filter.dropped.value = [
-      { path: [0], reason: 'unknown_field', detail: { field: 'mystery' } },
+      { path: [0], code: 'unknown_field', field: 'mystery' },
     ]
     const wrapper = mount(FilterButton, { props: { filter } })
     expect(
@@ -150,7 +150,7 @@ describe('FilterButton — slot', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="slot"]').text()).toBe('1|false')
 
-    filter.dropped.value = [{ path: [0], reason: 'unknown_field' }]
+    filter.dropped.value = [{ path: [0], code: 'unknown_field', field: 'mystery' }]
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="slot"]').text()).toBe('1|true')
   })

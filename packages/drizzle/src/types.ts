@@ -1,4 +1,4 @@
-import type { FieldDef, FilterSchema, ValidAST } from '@dql-kit/core'
+import type { CheckedAST, FieldDef, FilterSchema } from '@dql-kit/core'
 import type { AnyColumn, SQL } from 'drizzle-orm'
 
 export type AnyDrizzleTable = {
@@ -31,5 +31,10 @@ export type CreateTranslatorOptions<S extends FilterSchema> =
   | { schema: S, columns: ColumnMap<S['fields']>, ops?: OpMap }
 
 export type Translator = {
-  toWhere: (ast: ValidAST) => SQL
+  /**
+   * Translate a parsed AST into a WHERE fragment. Only accepts the
+   * output of `parseAst` from `@dql-kit/core`: run untrusted input
+   * (request bodies, stored filters) through it first.
+   */
+  toWhere: (ast: CheckedAST) => SQL
 }
