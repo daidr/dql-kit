@@ -17,7 +17,7 @@ const result = computed(() =>
 <template>
   <div class="tab-pane">
     <p class="tab-pane__hint">
-      通过 <code>@dql-kit/drizzle</code> 翻译为 PostgreSQL 方言。表与列均为根据 schema 动态构造的虚拟模型。
+      通过 <code>@dql-kit/drizzle-pg</code> 翻译为 PostgreSQL 方言。表与列均为根据 schema 动态构造的虚拟模型。
     </p>
 
     <template v-if="result.ok">

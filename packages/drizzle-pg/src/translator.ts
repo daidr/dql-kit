@@ -29,7 +29,7 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
     const col = fromExplicit ?? fromTable
     if (!col) {
       throw new Error(
-        `[dql-kit/drizzle] Missing column mapping for field "${fieldKey}". `
+        `[dql-kit/drizzle-pg] Missing column mapping for field "${fieldKey}". `
           + `Provide a "table" with a column of the same name, or include "${fieldKey}" in "columns".`,
       )
     }
@@ -53,7 +53,7 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
     const col = columns[node.field]
     if (!col) {
       throw new Error(
-        `[dql-kit/drizzle] AST references unknown field "${node.field}" not present in schema.`,
+        `[dql-kit/drizzle-pg] AST references unknown field "${node.field}" not present in schema.`,
       )
     }
     // The CheckedAST brand already guarantees this; re-checked because a
@@ -61,21 +61,21 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
     // otherwise reach an op handler built for a different column type.
     if (!allowedOps.get(node.field)?.has(node.op)) {
       throw new Error(
-        `[dql-kit/drizzle] Op "${node.op}" is not allowed on field "${node.field}". `
+        `[dql-kit/drizzle-pg] Op "${node.op}" is not allowed on field "${node.field}". `
           + `Parse untrusted input with parseAst() before translating.`,
       )
     }
     const opFn = Object.prototype.hasOwnProperty.call(ops, node.op) ? ops[node.op] : undefined
     if (!opFn) {
       throw new Error(
-        `[dql-kit/drizzle] No SQL translator registered for op "${node.op}". `
+        `[dql-kit/drizzle-pg] No SQL translator registered for op "${node.op}". `
           + `Pass it via createDrizzleTranslator({ ops: { ${node.op}: ... } }).`,
       )
     }
     const fieldDef = opts.schema.fields[node.field]
     if (!fieldDef) {
       throw new Error(
-        `[dql-kit/drizzle] AST references field "${node.field}" not declared in schema.`,
+        `[dql-kit/drizzle-pg] AST references field "${node.field}" not declared in schema.`,
       )
     }
     return opFn(col, node.value, { field: fieldDef })
