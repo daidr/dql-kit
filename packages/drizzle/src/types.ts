@@ -30,11 +30,16 @@ export type CreateTranslatorOptions<S extends FilterSchema> =
   | { schema: S, table: AnyDrizzleTable, columns?: ColumnMap<S['fields']>, ops?: OpMap }
   | { schema: S, columns: ColumnMap<S['fields']>, ops?: OpMap }
 
-export type Translator = {
+export type Translator<S extends FilterSchema = FilterSchema> = {
   /**
    * Translate a parsed AST into a WHERE fragment. Only accepts the
    * output of `parseAst` from `@dql-kit/core`: run untrusted input
    * (request bodies, stored filters) through it first.
+   *
+   * Typed by the translator's schema, so an AST parsed against an
+   * unrelated schema doesn't compile (one parsed against a subset of
+   * its fields does). Method syntax keeps `Translator<S>` assignable to
+   * the loose `Translator`.
    */
-  toWhere: (ast: CheckedAST) => SQL
+  toWhere(ast: CheckedAST<S>): SQL
 }

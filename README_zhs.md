@@ -158,6 +158,36 @@ const rows = await db.select().from(table.articles).where(translator.toWhere(par
 `between` 按 UTC 零点切天。`date` 字段请映射到 `date` 列，需要本地日期语义时用
 `datetime`。
 
+### 5. 类型化 AST
+
+`ValidAST<typeof schema>` 在编译期一起检查 `field`、`op` 和 `value`。
+`analyze`、`prune`、`validate`、`fromUrl`、`parseAst` 以及
+`useFilter().valid` / `committedValid` 返回的 AST 都按所校验的 schema 定型；
+`translator.toWhere` 只接受它自己 schema（或其字段子集）的 `CheckedAST`。
+
+```ts
+import { defineOp, type ValidAST } from '@dql-kit/core'
+
+const ast: ValidAST<typeof articleFilterSchema> = {
+  combinator: 'and',
+  children: [
+    { field: 'status', op: 'in', value: ['draft'] },
+    { field: 'authorId', op: 'eq', value: 42 },                // id<number>
+    { field: 'publishedAt', op: 'inLast', value: { amount: 7, unit: 'day' } },
+    // { field: 'status', op: 'contains', value: 'x' },        // 报错：字段不支持该 op
+    // { field: 'status', op: 'eq', value: 'archived' },       // 报错：不在枚举值内
+  ],
+}
+
+// 先按 field、再按 op 收窄，value 会随之收窄：
+// if (c.field === 'status' && c.op === 'in') c.value // ('draft' | 'published')[]
+```
+
+只有 op 保留了字面量类型时才能推导出 op 名和值形状：内置 op 都保留，
+`defineOp('scoreAbove', 'single')` 也会保留。标注成 `OpDef[]` 的 op 列表
+照常可用，只是该字段退化为宽松类型（`op: string`、`value?: unknown`）。
+不带类型参数的 `ValidAST` 是宽松结构，类型化 AST 可以直接赋给它。
+
 ## 开发
 
 ```bash

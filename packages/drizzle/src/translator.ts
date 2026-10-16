@@ -13,7 +13,7 @@ const isGroupNode = (n: ValidNode): n is Extract<ValidNode, { combinator: unknow
 
 export const createDrizzleTranslator = <S extends FilterSchema>(
   opts: CreateTranslatorOptions<S>,
-): Translator => {
+): Translator<S> => {
   // Construction-time merge: built-in ops first, user `ops` override on
   // top. Result is frozen-by-convention — there is no post-construction
   // `registerOp`. Add custom ops via the `ops` option instead.
@@ -82,7 +82,7 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
   }
 
   return {
-    toWhere(ast: CheckedAST): SQL {
+    toWhere(ast: CheckedAST<S>): SQL {
       if (ast.children.length === 0) return sql`true`
       return translateNode(ast)
     },

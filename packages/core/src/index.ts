@@ -1,6 +1,14 @@
 export * from './types.ts'
-export { builtinOps, opByName, type BuiltinOpName } from './ops.ts'
-export { f, defineFilterSchema } from './builder.ts'
+export { builtinOps, defineOp, opByName, type BuiltinOpName } from './ops.ts'
+export { f, defineFilterSchema, type DefaultOps, type WithOps } from './builder.ts'
+export type {
+  ConditionOf,
+  FieldKey,
+  FieldOpName,
+  FieldScalar,
+  OpValue,
+  RelativeValue,
+} from './typed-ast.ts'
 export {
   emptyAst,
   emptyDraft,

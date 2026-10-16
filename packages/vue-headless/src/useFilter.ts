@@ -604,8 +604,11 @@ export const useFilter = <S extends FilterSchema>(
     schema: schemaRef,
     fetchers: fetcherMap as FetcherMapFor<S>,
     draft,
-    valid,
-    committedValid,
+    // Internals work on the loose ValidAST; both refs only ever hold
+    // `analyze` / `fromUrl` output for this schema (or a caller-supplied
+    // ValidAST<S>), so exposing them typed against S is sound.
+    valid: valid as ComputedRef<ValidAST<S>>,
+    committedValid: committedValid as ComputedRef<ValidAST<S>>,
     isDirty,
     commit,
     discard,
@@ -616,7 +619,7 @@ export const useFilter = <S extends FilterSchema>(
     labelOf,
     actions,
     applyAst,
-    toJSON,
+    toJSON: toJSON as () => ValidAST<S>,
     invalidateLabels,
   }
 }

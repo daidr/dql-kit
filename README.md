@@ -159,6 +159,38 @@ a PG `date` column that's exact; on a `timestamp` column, `eq` / `before` /
 `after` / `between` cut days at UTC midnight. Map `date` fields to `date`
 columns, or use `datetime` when the local day matters.
 
+### 5. Typed ASTs
+
+`ValidAST<typeof schema>` checks `field`, `op` and `value` together at
+compile time. `analyze`, `prune`, `validate`, `fromUrl`, `parseAst` and
+`useFilter().valid` / `committedValid` return ASTs typed by the schema they
+checked against, and `translator.toWhere` only takes a `CheckedAST` of its
+own schema (or of a subset of its fields).
+
+```ts
+import { defineOp, type ValidAST } from '@dql-kit/core'
+
+const ast: ValidAST<typeof articleFilterSchema> = {
+  combinator: 'and',
+  children: [
+    { field: 'status', op: 'in', value: ['draft'] },
+    { field: 'authorId', op: 'eq', value: 42 },                // id<number>
+    { field: 'publishedAt', op: 'inLast', value: { amount: 7, unit: 'day' } },
+    // { field: 'status', op: 'contains', value: 'x' },        // error: op not allowed
+    // { field: 'status', op: 'eq', value: 'archived' },       // error: not an enum value
+  ],
+}
+
+// Narrowing on field, then op, narrows value:
+// if (c.field === 'status' && c.op === 'in') c.value // ('draft' | 'published')[]
+```
+
+Op names and shapes are only known when the op keeps its literal type:
+builtins do, and so does `defineOp('scoreAbove', 'single')`. An op list
+annotated as `OpDef[]` still works but types that field loosely
+(`op: string`, `value?: unknown`). Without a type argument, `ValidAST` is
+the loose structural form, and typed ASTs are assignable to it.
+
 ## Development
 
 ```bash
