@@ -17,10 +17,11 @@
   "files": ["src", "dist"],
   "scripts": {
     "build": "bun build ./src/index.ts --outdir ./dist --target browser --format esm && tsc -p tsconfig.build.json",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "bun test"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.3",
     "typescript": "^5.5.0"
   }
 }

@@ -280,17 +280,17 @@ const resolveLimits = (limits?: Partial<AstLimits>): AstLimits => ({
  *
  * `json` is a parsed JSON value, not a string.
  */
-export const parseAst = (
+export const parseAst = <S extends FilterSchema>(
   json: unknown,
-  schema: FilterSchema,
+  schema: S,
   limits?: Partial<AstLimits>,
-): ParseResult => {
+): ParseResult<S> => {
   const { ast, errors } = walkAst(json, schema, {
     keys: LONG_KEYS,
     limits: resolveLimits(limits),
   })
   if (errors.length > 0) return { ok: false, errors }
-  return { ok: true, ast: ast as CheckedAST }
+  return { ok: true, ast: ast as CheckedAST as CheckedAST<S> }
 }
 
 export { resolveLimits }

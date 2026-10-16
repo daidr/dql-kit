@@ -60,7 +60,7 @@ export type FetcherMapFor<S extends FilterSchema> = {
 export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
   schema: S | Ref<S | undefined>
   fetchers?: FetcherMapFor<S>
-  initial?: ValidAST
+  initial?: ValidAST<S>
   /**
    * URL sync. Default `'none'` — call sites must explicitly opt in to
    * URL persistence by passing a `UrlAdapter`. Use the helper
@@ -150,13 +150,17 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   schema: ComputedRef<S | undefined>
   fetchers: FetcherMapFor<S>
   draft: Ref<DraftAST>
-  /** Live valid AST derived from `draft`. Always reflects the latest edits. */
-  valid: ComputedRef<ValidAST>
+  /**
+   * Live valid AST derived from `draft`. Always reflects the latest edits.
+   * Typed against the schema (`ValidAST<S>`): every condition in it passed
+   * `analyze`, so narrowing on `field` / `op` narrows `value`.
+   */
+  valid: ComputedRef<ValidAST<S>>
   /**
    * Last-committed valid AST. In `commitMode: 'auto'` this is identical
    * to `valid`. In `'manual'` it lags behind until `commit()` is called.
    */
-  committedValid: ComputedRef<ValidAST>
+  committedValid: ComputedRef<ValidAST<S>>
   isDirty: ComputedRef<boolean>
   commit: () => void
   discard: () => void
@@ -166,8 +170,11 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   search: Ref<SearchSlot>
   labelOf: (fieldKey: string, id: string | number) => LabelStatus
   actions: FilterActions
-  applyAst: (ast: ValidAST) => void
-  toJSON: () => ValidAST
+  // Method syntax on purpose: method parameters are bivariant, so a
+  // schema-typed `UseFilterReturn<typeof schema>` can still be passed to
+  // components that accept the loose `UseFilterReturn`.
+  applyAst(ast: ValidAST<S>): void
+  toJSON: () => ValidAST<S>
   invalidateLabels: (fieldKey?: string) => void
 }
 

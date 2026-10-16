@@ -15,13 +15,14 @@ import {
 } from './types.ts'
 import { LONG_KEYS, walkAst } from './parse.ts'
 
-export const emptyAst = (): ValidAST => ({ combinator: 'and', children: [] })
+export const emptyAst = <S extends FilterSchema = FilterSchema>(): ValidAST<S> =>
+  ({ combinator: 'and', children: [] })
 
 export const emptyDraft = (): DraftAST => ({ combinator: 'and', children: [] })
 
-export const isCondition = (
-  n: DraftNode | ValidNode,
-): n is DraftCondition | ValidCondition =>
+export const isCondition = <N extends DraftNode | ValidNode>(
+  n: N,
+): n is Extract<N, { field: unknown }> =>
   n != null && typeof n === 'object' && 'field' in n
 
 const isValidationError = (e: ParseError): e is ValidationError =>
@@ -42,21 +43,25 @@ const isValidationError = (e: ParseError): e is ValidationError =>
  * like) are pruned without an error; use `parseAst` for input whose
  * shape isn't guaranteed by the type system.
  */
-export const analyze = (
+//
+// The returned AST is typed against `schema`: every condition that
+// survives passed the same field / op / shape / value-type checks
+// `ValidAST<S>` encodes, so the cast is backed by the walk.
+export const analyze = <S extends FilterSchema>(
   draft: DraftAST,
-  schema: FilterSchema,
-): Analysis => {
+  schema: S,
+): Analysis<S> => {
   const { ast, errors } = walkAst(draft, schema, { keys: LONG_KEYS, limits: null })
-  return { ast, errors: errors.filter(isValidationError) }
+  return { ast: ast as ValidAST<S>, errors: errors.filter(isValidationError) }
 }
 
-export const prune = (draft: DraftAST, schema: FilterSchema): ValidAST =>
+export const prune = <S extends FilterSchema>(draft: DraftAST, schema: S): ValidAST<S> =>
   analyze(draft, schema).ast
 
-export const validate = (
+export const validate = <S extends FilterSchema>(
   draft: DraftAST,
-  schema: FilterSchema,
-): { ok: true, ast: ValidAST } | { ok: false, errors: ValidationError[] } => {
+  schema: S,
+): { ok: true, ast: ValidAST<S> } | { ok: false, errors: ValidationError[] } => {
   const { ast, errors } = analyze(draft, schema)
   if (errors.length > 0) return { ok: false, errors }
   return { ok: true, ast }

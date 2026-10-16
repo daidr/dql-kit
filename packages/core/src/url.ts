@@ -76,11 +76,11 @@ const parseUrlValue = (raw: string): { ok: true, value: unknown } | { ok: false 
  * yields an empty AST with a single `parse_error`, and one using a newer
  * envelope version yields `unsupported_version`.
  */
-export const fromUrl = (
+export const fromUrl = <S extends FilterSchema>(
   value: string,
-  schema: FilterSchema,
+  schema: S,
   limits?: Partial<AstLimits>,
-): { ast: ValidAST, dropped: DroppedNode[] } => {
+): { ast: ValidAST<S>, dropped: DroppedNode[] } => {
   if (value === '') return { ast: emptyAst(), dropped: [] }
 
   const parsed = parseUrlValue(value)
@@ -109,5 +109,5 @@ export const fromUrl = (
     keys: COMPACT_KEYS,
     limits: resolveLimits(limits),
   })
-  return { ast, dropped: errors }
+  return { ast: ast as ValidAST<S>, dropped: errors }
 }
