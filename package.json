@@ -8,10 +8,12 @@
   "scripts": {
     "build": "bun run --workspaces build",
     "type-check": "bun run --workspaces type-check",
-    "test": "bun run --workspaces test"
+    "test": "bun run --workspaces --if-present test",
+    "lint": "oxlint --deny-warnings packages"
   },
   "devDependencies": {
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "oxlint": "^1.88.0"
   },
   "engines": {
     "bun": ">=1.1.0"
