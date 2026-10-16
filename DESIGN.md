@@ -1,8 +1,11 @@
 # dql-kit Design Document
 
-This document captures the architectural decisions that shaped dql-kit's day-1 API.
+This document captures the architectural decisions that shaped dql-kit's API.
 All decisions are explicit trade-offs; alternatives considered are recorded so future
 contributors understand *why* the current shape exists, not just what it is.
+
+Where a later change replaced a day-1 decision, the original text is kept and
+marked **Superseded**, followed by what the code does now.
 
 ## Vision
 
@@ -25,11 +28,12 @@ Three pillars:
 @dql-kit/core              ──► pure logic, zero deps beyond TS
    ├── builder/            f.string, f.number, ..., f.custom (delegateTo)
    ├── ast/                types, analyze, prune, validate, astEqual
+   ├── parse/              parseAst + limits: the one walker behind analyze / fromUrl
    ├── url/                toUrl, fromUrl, version sniffer
    └── ops/                op metadata registry (no implementations)
 
-@dql-kit/drizzle           ──► peerDeps: @dql-kit/core, drizzle-orm
-   ├── translator          AST → SQL WHERE fragment (immutable, ops-as-option)
+@dql-kit/drizzle           ──► peerDeps: @dql-kit/core, drizzle-orm   (PostgreSQL only)
+   ├── translator          CheckedAST → SQL WHERE fragment (immutable, ops-as-option)
    └── ops                 op name → drizzle SQL builder (delegateTo-aware)
 
 @dql-kit/vue-headless      ──► peerDeps: @dql-kit/core, vue
@@ -42,7 +46,8 @@ Three pillars:
    └── vueRouterUrlAdapter()   `UrlAdapter` backed by useRoute / useRouter
 
 @dql-kit/vue-ui            ──► peerDeps: @dql-kit/vue-headless, vue
-   ├── <FilterBuilder>     reference UI (vertical-stack, popover-trigger)
+   ├── <FilterPanel>       reference editing panel (tree of groups / conditions)
+   ├── <FilterButton>      trigger with active-count + notice indicator
    ├── built-in renderers  StringInput, NumberPairInput, IdAutocompleteInput, ...
    ├── builtinRenderers    per-typeId catalogue with default + per-shape entries
    └── resolveRenderer     (typeId, shape, { overrides, delegateTo })
@@ -182,6 +187,19 @@ const articleFilter = defineFilterSchema({
 Day-1 ships **only the Drizzle adapter**. Other adapters (Kysely, raw SQL) can
 ship as separate packages following the same pattern.
 
+**The Drizzle adapter targets PostgreSQL only.** Its op handlers use
+PG-specific SQL: `ILIKE`, `= ANY(col)` / `<> ALL(col)` and `@>` for arrays,
+`cardinality(col)`, and `NOW() - INTERVAL '...'` for `inLast`. Running it
+against MySQL or SQLite through Drizzle will produce invalid SQL. A
+dialect-neutral adapter would be a separate package (or a per-dialect op map).
+
+**`date` values are UTC days.** The adapter turns a `date` value
+`'2024-01-01'` into `new Date('2024-01-01')`, which is midnight UTC. Against a
+PG `date` column that is exact; against a `timestamp` / `timestamptz` column,
+`eq` / `before` / `after` / `between` cut days at UTC midnight, not the
+viewer's local midnight. Map `date` fields to `date` columns, or use
+`datetime` with explicit instants when the local day matters.
+
 ### Q10 — Draft vs Valid AST
 
 **Decisions**:
@@ -212,6 +230,24 @@ ship as separate packages following the same pattern.
   fromUrl(url, schema) → { ast: ValidAST, dropped: DroppedNode[] }
   ```
   Schema-incompatible nodes are dropped; UI may surface a notice.
+- **Server-side parsing**: untrusted input (request bodies, stored filters) goes
+  through `parseAst(json, schema, limits?) → { ok: true, ast: CheckedAST } |
+  { ok: false, errors: ParseError[] }`. Strict: any problem fails the parse.
+  The output is normalised (same flattening rules, extra keys dropped, values
+  copied) and branded `CheckedAST`; `Translator.toWhere` accepts only
+  `CheckedAST`, so translating an unchecked AST doesn't type-check. The
+  translator also re-checks at runtime that each op is declared on its field,
+  because a cast defeats the brand.
+- **One walker, three entry points.** `analyze` (drafts), `parseAst` (request
+  bodies) and `fromUrl` (links) share one tree walk, so they keep and reject
+  exactly the same nodes. They differ only in strictness (`parseAst` fails on
+  any error; `analyze` / `fromUrl` prune and report) and in limits (drafts are
+  built by the app's own UI and walk without limits).
+- **Limits** (`AstLimits`, default `DEFAULT_AST_LIMITS`): `maxDepth: 8` (group
+  nesting, root = 1), `maxNodes: 200` (groups + conditions), `maxListLength:
+  100` (`list`-shaped values). Depth is checked before descending, so the
+  recursion is bounded and a hostile 20 000-deep payload fails cleanly instead
+  of overflowing the stack.
 - **(e)** ValidationError shape — 5 codes:
 
   ```ts
@@ -223,7 +259,30 @@ ship as separate packages following the same pattern.
     | { path: number[], code: 'incomplete',           missing: 'field' | 'op' | 'value' }
   ```
 
+  `parseAst` and `fromUrl` report `ParseError`, which is `ValidationError`
+  plus four codes only untrusted input can produce: `invalid_node` (not a
+  group or condition), `parse_error` (URL value isn't JSON),
+  `unsupported_version` (newer URL envelope) and `limit_exceeded`.
+  `DroppedNode` is the same type, so URL notices and server errors read alike.
+
 ### Q11 — Vue UI binding
+
+> **Superseded in part.** What the code does now:
+> - The reference UI is `<FilterPanel>` (editing tree) + `<FilterButton>`
+>   (trigger), not `<FilterBuilder>` with layout variants.
+> - Renderers are registered once on the plugin instance —
+>   `createDqlKit({ renderers: { [typeId]: { default, [shape]: … } } })` — not
+>   via `registerFieldRenderer`. `resolveRenderer` applies the same
+>   fall-through for custom UIs.
+> - URL sync is **opt-in**: `sync` defaults to `'none'`; pass a `UrlAdapter`
+>   such as `vueRouterUrlAdapter()` from `@dql-kit/vue-router-sync`.
+>   `vue-headless` never imports vue-router.
+> - `commitMode: 'auto' | 'manual'` decides whether edits reach the URL live
+>   or on `commit()`; `committedValid`, `isDirty`, `commit()`, `discard()`
+>   and `dropped` / `dismissDropped()` are part of the surface.
+> - Actions also include `wrapGroup(path, { outerCombinator? })`.
+>
+> The original decision follows.
 
 **Decisions**:
 
@@ -273,7 +332,7 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
 
 **Decisions**:
 
-- **(a2)** Compact-key JSON + URI encoding. Mapping:
+- **(a2)** Compact-key JSON. Mapping:
   | full | compact |
   |---|---|
   | `combinator` | `c` |
@@ -282,12 +341,19 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
   | `op`         | `o` |
   | `value`      | `v` |
 - Combinator values stay as `'and' / 'or'` (readability > 2 bytes).
+- **No encoding in `toUrl`.** `toUrl` returns the plain JSON string and the URL
+  layer (router, `URLSearchParams`) encodes it once. Day-1 `toUrl` also ran
+  `encodeURIComponent`, so the router encoded it a second time
+  (`%257B%2522c%2522…`). `fromUrl` still reads such links: if the value isn't
+  JSON it decodes once and retries.
 - **(c3)** Day-1 emits **bare AST** (no envelope). `fromUrl` includes a sniffer:
-  ```ts
-  if ('v' in parsed) return parseV1(parsed)  // future
-  return parseV0(parsed)                       // day-1
-  ```
-  Future versions can add envelope `{ v: 1, ast: ... }` without breaking old URLs.
+  a root object with a numeric `v` and no `c` is an envelope. Future versions
+  can add envelope `{ v: 1, ast: ... }` without breaking old URLs; until then
+  an envelope is reported as `unsupported_version` in `dropped` with an empty
+  AST.
+- **`fromUrl` never throws.** URLs are user input (pasted links, history), and
+  `useFilter` reads them during component setup. Unparseable values, unknown
+  versions, malformed nodes and limit violations all land in `dropped`.
 - **(d)** Value encoding conventions:
   - `date` → `"YYYY-MM-DD"` (ISO calendar date)
   - `datetime` → `"YYYY-MM-DDTHH:mm:ssZ"` (ISO instant)
@@ -345,7 +411,7 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
   - `filter.draft` is a deep-reactive `ref<DraftAST>` — UI can `v-model` directly.
   - `filter.valid` is `computed(() => structuredClone(toRaw(prune(draft.value))))`
     — translator/serializer always receive plain frozen-shape data, never proxies.
-  - 7 actions methods (see Q11) cover all mutations the UI needs.
+  - The `actions` methods (see Q11) cover all mutations the UI needs.
 - **(c2)** Day-1 ships NO saved-filter persistence or preset UI. The hook exposes
   `applyAst(ast) / toJSON() / clear()` — sufficient primitives for any preset
   storage strategy (localStorage / backend / URL share). Persistence target and
@@ -353,6 +419,10 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
 - **Packaging**:
   - New repo at `D:\devFolder\dql-kit\` (Bun workspaces).
   - Three packages: `@dql-kit/core`, `@dql-kit/drizzle`, `@dql-kit/vue`.
+    **Superseded**: the Vue side split into `@dql-kit/vue-headless`,
+    `@dql-kit/vue-router-sync` and `@dql-kit/vue-ui` (see Package boundaries),
+    plus a private `playground`. Tests: core uses `bun test`, the other
+    packages vitest (drizzle runs against in-process PGlite).
   - **Day-1 NOT published to npm**; consumed via `file:` workspace reference from
     story-verse. Publish after stabilisation.
   - Each package independent vitest. Core targets 100% coverage (pure functions).
@@ -368,7 +438,9 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
   ```
   Drizzle adapter holds its own translator map keyed by op name. Custom ops
   require dual registration (schema-side `withOps` + translator-side
-  `registerOp`) — explicit boundary, no hidden coupling.
+  handler) — explicit boundary, no hidden coupling. **Superseded detail**:
+  there is no mutating `registerOp`; handlers are passed once as
+  `createDrizzleTranslator({ ops: { … } })` and the translator is immutable.
 
 ## Excluded from day-1 (deliberate)
 
@@ -391,6 +463,7 @@ layer or a later phase, with API hooks already preserved:
 - Aggregations (HAVING-style filters)?
 - Cross-row predicates (e.g., "articles with at least one comment containing X")?
 - Field-level permissions (hide some fields per user role)?
-- Server-side parsing API (`fromJSON` on Node without core's URL helper)?
+
+Resolved: server-side parsing is `parseAst` (see Q10).
 
 These are intentionally not designed yet — wait for real usage before committing.
