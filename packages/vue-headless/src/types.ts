@@ -108,7 +108,13 @@ export type FilterActions = {
   addCondition: (parentPath: number[], condition?: Partial<{ field: string, op: string, value: unknown }>) => void
   removeNode: (path: number[]) => void
   updateNode: (path: number[], partial: Partial<{ field: string, op: string, value: unknown }>) => void
-  addGroup: (parentPath: number[], combinator?: 'and' | 'or') => void
+  /**
+   * Append a group under `parentPath`, optionally seeded with `children`
+   * (copied). Seeding in the same action matters with `flattenDraft`: an
+   * empty group added as a lone child would be collapsed before a second
+   * action could fill it.
+   */
+  addGroup: (parentPath: number[], combinator?: 'and' | 'or', children?: DraftNode[]) => void
   setCombinator: (path: number[], combinator: 'and' | 'or') => void
   /**
    * Wrap the group at `path` into a fresh outer group, prepended with an

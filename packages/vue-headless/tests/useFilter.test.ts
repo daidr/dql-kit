@@ -297,6 +297,16 @@ describe('useFilter — unwrapGroup / replaceNode / flattenDraft', () => {
     })
   })
 
+  it('addGroup seeds children in the same action (survives flattenDraft)', () => {
+    const filter = useFilter({ schema, sync: 'none', flattenDraft: true })
+    filter.actions.addCondition([], r)
+    filter.actions.addGroup([], 'or', [{ field: null, op: null }])
+    expect(filter.draft.value).toEqual({
+      combinator: 'and',
+      children: [r, { combinator: 'or', children: [{ field: null, op: null }] }],
+    })
+  })
+
   it('without flattenDraft the redundant wrapper stays', () => {
     const filter = useFilter({ schema, sync: 'none' })
     filter.actions.addCondition([], r)

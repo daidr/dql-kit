@@ -378,12 +378,15 @@ export const useFilter = <S extends FilterSchema>(
         }
       })
     },
-    addGroup(parentPath, combinator = 'and') {
+    addGroup(parentPath, combinator = 'and', children = []) {
       mutate((d) => {
         const target =
           parentPath.length === 0 ? d : (navigate(d, parentPath) as DraftGroup | null)
         if (!target || !isGroup(target)) return
-        ;(target as DraftGroup).children.push({ combinator, children: [] })
+        ;(target as DraftGroup).children.push({
+          combinator,
+          children: cloneDraft(toRaw(children)),
+        })
       })
     },
     setCombinator(path, combinator) {
