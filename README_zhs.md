@@ -12,8 +12,9 @@
 
 | Package | 描述 |
 |---|---|
-| [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、解析不可信输入的 `parseAst`、URL 序列化。零 ORM / 框架 / i18n 依赖。 |
+| [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、解析不可信输入的 `parseAst`、生成请求体校验的 `toJsonSchema`、URL 序列化。零 ORM / 框架 / i18n 依赖。 |
 | [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM 翻译器，**仅支持 PostgreSQL**。解析后的 AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
+| [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` —— 把 `toJsonSchema` 的结果转成 TypeBox schema，例如用作 Elysia 路由的 body。 |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` 组合式函数 + `createDqlKit` Vue 插件。通过 `UrlAdapter` 实现可插拔的 URL 同步（此处不引入 `vue-router`）。 |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` —— 面向 vue-router 应用的 `UrlAdapter`。 |
 | [`@dql-kit/vue-ui`](./packages/vue-ui) | 参考实现 `<FilterPanel>` / `<FilterButton>` + 内置输入渲染器。可选 —— 应用通常会基于 `useFilter` 自行封装组件。 |
@@ -24,6 +25,7 @@
 schema (core)
   ├─→ analyze (core)         draft → { ast, errors }，单次遍历
   ├─→ parseAst (core)        不可信 JSON → CheckedAST | errors（同一遍走查 + 上限）
+  ├─→ toJsonSchema (core)    请求体 JSON Schema（经 @dql-kit/typebox 转为 TypeBox）
   ├─→ URL serializer (core)
   ├─→ SQL translator (drizzle)
   └─→ UI renderer (vue-ui / app)
@@ -148,6 +150,24 @@ const translator = createDrizzleTranslator({
 const parsed = parseAst(body.filter, articleFilterSchema)
 if (!parsed.ok) throw new BadRequest(parsed.errors)
 const rows = await db.select().from(table.articles).where(translator.toWhere(parsed.ast))
+```
+
+**请求体 schema。** `toJsonSchema(schema)` 描述该 schema 接受的 AST（字段、
+各字段允许的 op、值类型，嵌套按 `maxDepth` 展开），用于请求校验和 OpenAPI；
+`@dql-kit/typebox` 的 `toTypeBox` 给出等价的 TypeBox schema。在相同上限下它
+不会比 `parseAst` 更严格，但有些规则无法表达（节点总数、datetime 能否解析），
+所以校验通过的请求体仍要交给 `parseAst`。
+
+```ts
+import { toTypeBox } from '@dql-kit/typebox'
+
+app.post('/articles/query', handler, {
+  // 设置 `error` 让 Elysia 开发模式下的校验报错保持简短；不设的话 Elysia
+  // 会把每个失败 union 的所有分支都展开。
+  body: t.Object({
+    filter: toTypeBox(articleFilterSchema, { schemaOptions: { error: 'Invalid filter' } }),
+  }),
+})
 ```
 
 **仅支持 PostgreSQL。** 内置 op 生成的是 PG 专有 SQL（`ILIKE`、`= ANY(col)`、

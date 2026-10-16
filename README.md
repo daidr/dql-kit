@@ -12,8 +12,9 @@ Type-safe, schema-driven filter / query AST library for dashboards.
 
 | Package | Description |
 |---|---|
-| [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, `parseAst` for untrusted input, URL serialization. Zero ORM / framework / i18n deps. |
+| [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, `parseAst` for untrusted input, `toJsonSchema` for request bodies, URL serialization. Zero ORM / framework / i18n deps. |
 | [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM translator, **PostgreSQL only**. Parsed AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
+| [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` — the `toJsonSchema` output as a TypeBox schema, e.g. for an Elysia route body. |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` composable + `createDqlKit` Vue plugin. Pluggable URL sync via `UrlAdapter` (`vue-router` not imported here). |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` — `UrlAdapter` for vue-router apps. |
 | [`@dql-kit/vue-ui`](./packages/vue-ui) | Reference `<FilterPanel>` / `<FilterButton>` + built-in input renderers. Optional — apps usually wrap `useFilter` in their own components. |
@@ -24,6 +25,7 @@ Type-safe, schema-driven filter / query AST library for dashboards.
 schema (core)
   ├─→ analyze (core)         draft → { ast, errors } in one walk
   ├─→ parseAst (core)        untrusted JSON → CheckedAST | errors (same walk + limits)
+  ├─→ toJsonSchema (core)    request-body JSON Schema (→ TypeBox via @dql-kit/typebox)
   ├─→ URL serializer (core)
   ├─→ SQL translator (drizzle)
   └─→ UI renderer (vue-ui / app)
@@ -149,6 +151,25 @@ const translator = createDrizzleTranslator({
 const parsed = parseAst(body.filter, articleFilterSchema)
 if (!parsed.ok) throw new BadRequest(parsed.errors)
 const rows = await db.select().from(table.articles).where(translator.toWhere(parsed.ast))
+```
+
+**Request body schema.** `toJsonSchema(schema)` describes the AST a schema
+accepts (fields, their ops, value types, nesting unrolled to `maxDepth`) for
+request validation and OpenAPI; `toTypeBox` from `@dql-kit/typebox` gives the
+same as a TypeBox schema. It is never stricter than `parseAst` with the same
+limits, but cannot express everything (total node count, datetime
+parseability), so still run `parseAst` on the validated body.
+
+```ts
+import { toTypeBox } from '@dql-kit/typebox'
+
+app.post('/articles/query', handler, {
+  // `error` keeps Elysia's dev-mode validation message small; without it
+  // Elysia expands every branch of every failed union.
+  body: t.Object({
+    filter: toTypeBox(articleFilterSchema, { schemaOptions: { error: 'Invalid filter' } }),
+  }),
+})
 ```
 
 **PostgreSQL only.** The built-in op handlers emit PG-specific SQL (`ILIKE`,
