@@ -29,14 +29,74 @@ describe('asyncOrchestrator — search side', () => {
     const fetcher = vi.fn(async (q: string): Promise<Item[]> => [{ id: q, label: q }])
     const sink = mkPatchSink()
 
+    // First call runs immediately — it's how the orchestrator learns the
+    // fetcher is async.
+    orch.setQuery('authorId', '', fetcher, 250, sink.onPatch)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
     orch.setQuery('authorId', 'a', fetcher, 250, sink.onPatch)
     orch.setQuery('authorId', 'ab', fetcher, 250, sink.onPatch)
     orch.setQuery('authorId', 'abc', fetcher, 250, sink.onPatch)
-    expect(fetcher).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledTimes(1)
 
     await vi.advanceTimersByTimeAsync(250)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls[1]?.[0]).toBe('abc')
+  })
+
+  it('sync fetcher is never debounced, even with debounceMs > 0', () => {
+    const orch = createAsyncOrchestrator()
+    const fetcher = vi.fn((q: string): Item[] => [{ id: q, label: q }])
+    const sink = mkPatchSink()
+
+    orch.setQuery('status', 'a', fetcher, 250, sink.onPatch)
+    expect(sink.slot.results).toEqual([{ id: 'a', label: 'a' }])
+    orch.setQuery('status', 'ab', fetcher, 250, sink.onPatch)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(sink.slot.results).toEqual([{ id: 'ab', label: 'ab' }])
+    expect(sink.slot.loading).toBe(false)
+  })
+
+  it('switching field clears the previous field\'s results and drops its late arrival', async () => {
+    const orch = createAsyncOrchestrator()
+    let resolveA!: (items: Item[]) => void
+    const fetcherA = vi.fn(() => new Promise<Item[]>((r) => {
+      resolveA = r
+    }))
+    const fetcherB = vi.fn(async (): Promise<Item[]> => {
+      await new Promise((r) => setTimeout(r, 100))
+      return [{ id: 'b', label: 'B' }]
+    })
+    const sink = mkPatchSink()
+    sink.slot.results = [{ id: 'stale', label: 'stale' }]
+
+    orch.setQuery('authorId', 'x', fetcherA, 0, sink.onPatch)
+    orch.setQuery('tagId', 'x', fetcherB, 0, sink.onPatch)
+    expect(sink.slot.fieldKey).toBe('tagId')
+    expect(sink.slot.results).toEqual([])
+
+    resolveA([{ id: 'a', label: 'A' }])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sink.slot.results).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(sink.slot.results).toEqual([{ id: 'b', label: 'B' }])
+  })
+
+  it('dispose aborts the in-flight search and cancels a pending debounce', async () => {
+    const orch = createAsyncOrchestrator()
+    const signals: AbortSignal[] = []
+    const fetcher = vi.fn((_q: string, signal: AbortSignal): Promise<Item[]> => {
+      signals.push(signal)
+      return new Promise(() => {})
+    })
+    const sink = mkPatchSink()
+    orch.setQuery('authorId', 'a', fetcher, 250, sink.onPatch)
+    orch.setQuery('authorId', 'ab', fetcher, 250, sink.onPatch)
+    orch.dispose()
+    expect(signals[0]?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(250)
     expect(fetcher).toHaveBeenCalledTimes(1)
-    expect(fetcher.mock.calls[0]?.[0]).toBe('abc')
   })
 
   it('aborts the in-flight fetcher when a newer query arrives', async () => {
@@ -198,5 +258,74 @@ describe('asyncOrchestrator — resolve side', () => {
 
     orch.invalidateLabels()
     expect(orch._peek('tagId', 99).status).toBe('pending')
+  })
+
+  it('transient failure is retried after resolveRetryMs, not cached forever', async () => {
+    let t = 0
+    const orch = createAsyncOrchestrator({ resolveRetryMs: 1000, now: () => t })
+    let fail = true
+    const fetcher = vi.fn(async (ids: (string | number)[]): Promise<Item[]> => {
+      if (fail) throw new Error('network')
+      return ids.map((id) => ({ id, label: `L${String(id)}` }))
+    })
+    orch.resolveBatch('authorId', [1], fetcher)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(orch._peek('authorId', 1)).toEqual({ status: 'error', id: 1 })
+
+    // Inside the retry window: still cached.
+    t = 500
+    orch.resolveBatch('authorId', [1], fetcher)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    fail = false
+    t = 1000
+    orch.resolveBatch('authorId', [1], fetcher)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(orch._peek('authorId', 1)).toMatchObject({ status: 'resolved', label: 'L1' })
+  })
+
+  it('ids the fetcher answered without stay cached as errors (no retry)', async () => {
+    let t = 0
+    const orch = createAsyncOrchestrator({ resolveRetryMs: 1000, now: () => t })
+    const fetcher = vi.fn(async (): Promise<Item[]> => [])
+    orch.resolveBatch('authorId', [7], fetcher)
+    await vi.advanceTimersByTimeAsync(0)
+    t = 10_000
+    orch.resolveBatch('authorId', [7], fetcher)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(orch._peek('authorId', 7)).toEqual({ status: 'error', id: 7 })
+  })
+
+  it('dispose aborts in-flight resolves and ignores their late results', async () => {
+    const orch = createAsyncOrchestrator()
+    let signal!: AbortSignal
+    let finish!: (items: Item[]) => void
+    const fetcher = (_ids: (string | number)[], s: AbortSignal) => {
+      signal = s
+      return new Promise<Item[]>((r) => {
+        finish = r
+      })
+    }
+    orch.resolveBatch('authorId', [1], fetcher)
+    orch.dispose()
+    expect(signal.aborted).toBe(true)
+    finish([{ id: 1, label: 'late' }])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(orch._peek('authorId', 1)).toEqual({ status: 'pending' })
+  })
+
+  it('invalidateLabels aborts that field\'s in-flight resolve', () => {
+    const orch = createAsyncOrchestrator()
+    const signals: AbortSignal[] = []
+    const fetcher = (_ids: (string | number)[], s: AbortSignal) => {
+      signals.push(s)
+      return new Promise<Item[]>(() => {})
+    }
+    orch.resolveBatch('authorId', [1], fetcher)
+    orch.resolveBatch('tagId', [2], fetcher)
+    orch.invalidateLabels('authorId')
+    expect(signals[0]?.aborted).toBe(true)
+    expect(signals[1]?.aborted).toBe(false)
   })
 })

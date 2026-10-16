@@ -206,7 +206,9 @@ ship as separate packages following the same pattern.
   - Empty non-root group → drop.
   - Single-child group → hoist child to parent.
 - **(c2)** URL synchronizes **only Valid AST**, never drafts. Drafts can be
-  optionally persisted to sessionStorage via `useFilter({ persistDraft: 'session' })`.
+  optionally persisted to sessionStorage via `useFilter({ persistDraft: 'session' })`;
+  with URL sync, a saved draft is restored only when it was edited on top of the
+  filter the URL currently carries (otherwise it's discarded).
 - **(d3)** Deserialization is **lenient with reporting**:
   ```ts
   fromUrl(url, schema) → { ast: ValidAST, dropped: DroppedNode[] }
@@ -309,8 +311,9 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
   search:  (query: string,  signal: AbortSignal) => Awaitable<Item<ID>[]>
   resolve: (ids:   ID[],    signal: AbortSignal) => Awaitable<Item<ID>[]>
   ```
-- **Search is debounced** in `useFilter` — default `250ms`, configurable via
-  `debounceMs`. Set to `0` to disable.
+- **Async search is debounced** in `useFilter` — default `250ms`, configurable via
+  `debounceMs`. Set to `0` to disable. A fetcher's first call runs immediately and
+  tells the orchestrator whether it is sync; sync fetchers are never debounced.
 - **Take-latest** with epoch + AbortController. Stale resolutions are dropped
   even when fetcher implementations don't honour the signal.
 - **Resolve is invoked eagerly**: after schema/URL settle, `useFilter` collects
@@ -322,7 +325,10 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
 - **Caching**:
   - Search results: NOT cached (input-driven, low hit rate, user can wrap in their
     own fetcher if needed).
-  - Resolve results: in-memory, lifetime-of-instance, never expires. `invalidateLabels(fieldKey?)`
+  - Resolve results: in-memory, lifetime-of-instance. Ids the fetcher answered
+    without stay cached as errors; ids whose fetch threw / rejected may be retried
+    after a short window (default 5s). In-flight resolves are aborted on dispose.
+    `invalidateLabels(fieldKey?)`
     busts manually.
 - **Errors**:
   - Search failure → `filter.search.error` set; AST unaffected; UI offers retry.

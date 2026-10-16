@@ -20,9 +20,16 @@ type SearchFn<ID = string | number> = (q: string, signal: AbortSignal) => Awaita
 type ResolveFn<ID = string | number> = (ids: ID[], signal: AbortSignal) => Awaitable<Item<ID>[]>
 
 export type AsyncOrchestrator = {
-  // Drive the single search slot. Cancels any prior in-flight fetcher for
-  // the same fieldKey (AbortController) and bumps an epoch so a stale late
-  // arrival cannot overwrite a newer call's results.
+  // Drive the single search slot. Cancels any prior in-flight fetcher
+  // (AbortController) — for any field, since there is only one slot — and
+  // bumps an epoch so a stale late arrival cannot overwrite a newer call's
+  // results. Switching to a different field clears the previous field's
+  // results right away.
+  //
+  // Debounce applies to async fetchers only. Whether a fetcher is sync is
+  // learnt from its first call (which runs immediately); from then on a
+  // sync fetcher writes through on every keystroke with no delay and no
+  // loading flicker, an async one is debounced by `debounceMs`.
   setQuery: (
     fieldKey: string,
     query: string,
@@ -31,41 +38,71 @@ export type AsyncOrchestrator = {
     onPatch: (patch: Partial<SearchSlotState>) => void,
   ) => void
   // Batch-resolve labels for a list of ids on a given field. Cache is hit
-  // exact: only ids missing from the cache are sent to the fetcher.
+  // exact: only ids missing from the cache are sent to the fetcher. Ids
+  // whose last resolve failed (fetcher threw / rejected) become eligible
+  // again after `resolveRetryMs`; ids the fetcher answered without
+  // (genuinely unknown) stay cached as errors.
   resolveBatch: (fieldKey: string, ids: (string | number)[], fetcher: ResolveFn) => void
   // Reactive read of the resolve cache. Reads `epoch.value` so Vue tracks
   // the dependency; the cache itself is a plain Map for fast O(1) lookup.
   labelOf: (fieldKey: string, id: string | number) => LabelStatus
+  // Drop cached labels (one field or all) and abort their in-flight resolves.
   invalidateLabels: (fieldKey?: string) => void
-  // Abort all in-flight searches, clear all timers and caches. Called
-  // by useFilter on scope dispose so unmounting a host component
-  // doesn't leak fetchers or memory.
+  // Abort all in-flight searches and resolves, clear all timers and
+  // caches. Called by useFilter on scope dispose so unmounting a host
+  // component doesn't leak fetchers or memory.
   dispose: () => void
   // Test-only: synchronous read of the current cache contents.
   _peek: (fieldKey: string, id: string | number) => LabelStatus
 }
 
-type SearchController = {
-  abort: AbortController | null
-  epoch: number
-  debounceTimer: ReturnType<typeof setTimeout> | null
+export type AsyncOrchestratorOptions = {
+  /**
+   * How long a failed resolve (fetcher threw or rejected) stays cached
+   * before the id may be fetched again. Default 5000ms.
+   */
+  resolveRetryMs?: number
+  /** Clock override for tests. */
+  now?: () => number
 }
 
-export const createAsyncOrchestrator = (): AsyncOrchestrator => {
+const DEFAULT_RESOLVE_RETRY_MS = 5000
+
+export const createAsyncOrchestrator = (
+  options: AsyncOrchestratorOptions = {},
+): AsyncOrchestrator => {
+  const resolveRetryMs = options.resolveRetryMs ?? DEFAULT_RESOLVE_RETRY_MS
+  const now = options.now ?? (() => Date.now())
+
   const cache = new Map<string, Map<string | number, LabelStatus>>()
+  // fieldKey → id → timestamp after which a transient failure may be
+  // retried. Only ids whose fetch threw / rejected are listed here.
+  const retryAt = new Map<string, Map<string | number, number>>()
+  // In-flight resolves per field, so invalidate / dispose can abort them.
+  const resolveControllers = new Map<string, Set<AbortController>>()
   const epoch: Ref<number> = ref(0)
   const bumpCache = () => {
     epoch.value++
   }
 
-  const searchControllers = new Map<string, SearchController>()
-  const getSearchController = (fieldKey: string): SearchController => {
-    let c = searchControllers.get(fieldKey)
-    if (!c) {
-      c = { abort: null, epoch: 0, debounceTimer: null }
-      searchControllers.set(fieldKey, c)
+  // ---- search ----------------------------------------------------------
+
+  // One slot → one controller. A late result for field A must never land
+  // in the slot after the user moved on to field B.
+  let searchAbort: AbortController | null = null
+  let searchEpoch = 0
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null
+  let lastFieldKey: string | null = null
+  // Learnt per fetcher function: true = returns synchronously.
+  const fetcherIsSync = new WeakMap<SearchFn, boolean>()
+
+  const cancelSearch = () => {
+    if (searchAbort) searchAbort.abort()
+    searchAbort = null
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
     }
-    return c
   }
 
   const setQuery: AsyncOrchestrator['setQuery'] = (
@@ -75,68 +112,67 @@ export const createAsyncOrchestrator = (): AsyncOrchestrator => {
     debounceMs,
     onPatch,
   ) => {
-    const c = getSearchController(fieldKey)
+    // Abort any in-flight fetcher. The fetcher itself is expected to
+    // honour `signal.aborted`; we additionally drop late resolutions via
+    // the epoch check.
+    cancelSearch()
 
-    // Abort any in-flight fetcher for this field. The fetcher itself is
-    // expected to honour `signal.aborted`; we additionally drop late
-    // resolutions via the epoch check.
-    if (c.abort) c.abort.abort()
-    if (c.debounceTimer !== null) {
-      clearTimeout(c.debounceTimer)
-      c.debounceTimer = null
+    searchEpoch++
+    const myEpoch = searchEpoch
+
+    if (fieldKey !== lastFieldKey) {
+      lastFieldKey = fieldKey
+      onPatch({ fieldKey, query, error: null, loading: false, results: [] })
+    } else {
+      onPatch({ fieldKey, query, error: null })
     }
 
-    c.epoch++
-    const myEpoch = c.epoch
-
-    onPatch({ fieldKey, query, error: null })
-
     const ac = new AbortController()
-    c.abort = ac
+    searchAbort = ac
 
     const run = () => {
-      onPatch({ loading: true })
       let result: ReturnType<SearchFn>
       try {
         result = fetcher(query, ac.signal)
       } catch (err) {
-        if (myEpoch === c.epoch) {
-          onPatch({ loading: false, error: err as Error })
+        if (myEpoch === searchEpoch) {
+          onPatch({ loading: false, error: err instanceof Error ? err : new Error(String(err)) })
         }
         return
       }
       if (result instanceof Promise) {
+        fetcherIsSync.set(fetcher, false)
+        onPatch({ loading: true })
         result
           .then((items) => {
-            if (myEpoch !== c.epoch) return
+            if (myEpoch !== searchEpoch) return
             onPatch({ loading: false, results: items, error: null })
           })
           .catch((err: unknown) => {
-            if (myEpoch !== c.epoch) return
+            if (myEpoch !== searchEpoch) return
             if (ac.signal.aborted) return
             onPatch({ loading: false, error: err instanceof Error ? err : new Error(String(err)) })
           })
       } else {
-        // Sync fast path: write through immediately, no debounce delay,
-        // no loading flicker.
-        if (myEpoch === c.epoch) {
-          onPatch({ loading: false, results: result, error: null })
-        }
+        // Sync fast path: write through immediately, no loading flicker.
+        fetcherIsSync.set(fetcher, true)
+        onPatch({ loading: false, results: result, error: null })
       }
     }
 
-    if (debounceMs > 0 && fetcher.length >= 0) {
-      // The debounce is purely temporal; sync fast path is detected after
-      // calling the fetcher (which we can't avoid for sync detection unless
-      // we introduce a separate flag — keeping behaviour uniform here).
-      c.debounceTimer = setTimeout(() => {
-        c.debounceTimer = null
-        if (myEpoch === c.epoch) run()
+    // Unknown fetchers run immediately: that call tells us whether they
+    // are sync. Only known-async fetchers are debounced.
+    if (debounceMs > 0 && fetcherIsSync.get(fetcher) === false) {
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        if (myEpoch === searchEpoch) run()
       }, debounceMs)
     } else {
       run()
     }
   }
+
+  // ---- resolve ---------------------------------------------------------
 
   const resolveBatch: AsyncOrchestrator['resolveBatch'] = (fieldKey, ids, fetcher) => {
     let bucket = cache.get(fieldKey)
@@ -144,31 +180,69 @@ export const createAsyncOrchestrator = (): AsyncOrchestrator => {
       bucket = new Map()
       cache.set(fieldKey, bucket)
     }
+    let retries = retryAt.get(fieldKey)
+    if (!retries) {
+      retries = new Map()
+      retryAt.set(fieldKey, retries)
+    }
+    const b = bucket
+    const r = retries
 
-    // Only fetch ids that aren't already in the cache (any status counts
-    // as cached — pending/resolved/error all suppress re-fetch within the
-    // instance lifetime, per DESIGN.md Q13).
-    const missing = ids.filter((id) => !bucket!.has(id))
+    // Fetch ids that aren't cached, plus transient failures whose retry
+    // window has passed. pending / resolved / not-found suppress re-fetch.
+    const t = now()
+    const missing = [...new Set(ids)].filter((id) => {
+      if (!b.has(id)) return true
+      const at = r.get(id)
+      return at !== undefined && t >= at
+    })
     if (missing.length === 0) return
 
     for (const id of missing) {
-      bucket.set(id, { status: 'pending' })
+      b.set(id, { status: 'pending' })
+      r.delete(id)
     }
     bumpCache()
 
     const ac = new AbortController()
+    let controllers = resolveControllers.get(fieldKey)
+    if (!controllers) {
+      controllers = new Set()
+      resolveControllers.set(fieldKey, controllers)
+    }
+    const cs = controllers
+    cs.add(ac)
+    const settle = () => {
+      cs.delete(ac)
+    }
 
     const handleItems = (items: Item<string | number>[]) => {
+      settle()
+      if (ac.signal.aborted) return
       for (const item of items) {
-        bucket!.set(item.id, { status: 'resolved', label: item.label, meta: item.meta })
+        b.set(item.id, { status: 'resolved', label: item.label, meta: item.meta })
       }
-      // Any id we asked for but didn't get back: surface as error so the
-      // UI can fall back to '#<id>' (Q13: partial resolve failure).
+      // Any id we asked for but didn't get back: the fetcher answered and
+      // doesn't know it, so surface as a (cached) error and let the UI
+      // fall back to '#<id>' (Q13: partial resolve failure).
       for (const id of missing) {
-        const cur = bucket!.get(id)
+        const cur = b.get(id)
         if (cur && cur.status === 'pending') {
-          bucket!.set(id, { status: 'error', id })
+          b.set(id, { status: 'error', id })
         }
+      }
+      bumpCache()
+    }
+
+    const handleFailure = () => {
+      settle()
+      if (ac.signal.aborted) return
+      // Transient: network / server error. Cache the error so the UI shows
+      // the fallback, but allow a retry once the window passes.
+      const retryTime = now() + resolveRetryMs
+      for (const id of missing) {
+        b.set(id, { status: 'error', id })
+        r.set(id, retryTime)
       }
       bumpCache()
     }
@@ -177,21 +251,23 @@ export const createAsyncOrchestrator = (): AsyncOrchestrator => {
     try {
       result = fetcher(missing as never, ac.signal)
     } catch {
-      for (const id of missing) {
-        bucket.set(id, { status: 'error', id })
-      }
-      bumpCache()
+      handleFailure()
       return
     }
     if (result instanceof Promise) {
-      result.then((items) => handleItems(items as Item<string | number>[])).catch(() => {
-        for (const id of missing) {
-          bucket!.set(id, { status: 'error', id })
-        }
-        bumpCache()
-      })
+      result.then((items) => handleItems(items as Item<string | number>[]), handleFailure)
     } else {
       handleItems(result as Item<string | number>[])
+    }
+  }
+
+  const abortResolves = (fieldKey?: string) => {
+    const keys = fieldKey === undefined ? [...resolveControllers.keys()] : [fieldKey]
+    for (const k of keys) {
+      const cs = resolveControllers.get(k)
+      if (!cs) continue
+      for (const ac of cs) ac.abort()
+      resolveControllers.delete(k)
     }
   }
 
@@ -203,10 +279,13 @@ export const createAsyncOrchestrator = (): AsyncOrchestrator => {
   }
 
   const invalidateLabels: AsyncOrchestrator['invalidateLabels'] = (fieldKey) => {
+    abortResolves(fieldKey)
     if (fieldKey === undefined) {
       cache.clear()
+      retryAt.clear()
     } else {
       cache.delete(fieldKey)
+      retryAt.delete(fieldKey)
     }
     bumpCache()
   }
@@ -215,12 +294,12 @@ export const createAsyncOrchestrator = (): AsyncOrchestrator => {
     cache.get(fieldKey)?.get(id) ?? { status: 'pending' }
 
   const dispose: AsyncOrchestrator['dispose'] = () => {
-    for (const c of searchControllers.values()) {
-      if (c.abort) c.abort.abort()
-      if (c.debounceTimer !== null) clearTimeout(c.debounceTimer)
-    }
-    searchControllers.clear()
+    cancelSearch()
+    searchEpoch++
+    lastFieldKey = null
+    abortResolves()
     cache.clear()
+    retryAt.clear()
     bumpCache()
   }
 

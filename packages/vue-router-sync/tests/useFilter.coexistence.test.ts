@@ -202,8 +202,8 @@ describe('useFilter — multi-filter sessionStorage isolation', () => {
     const rawB = sessionStorage.getItem(`${STORAGE_PREFIX}b`)
     expect(rawA).not.toBeNull()
     expect(rawB).not.toBeNull()
-    expect(JSON.parse(rawA!).children[0]).toMatchObject({ field: 'title' })
-    expect(JSON.parse(rawB!).children[0]).toMatchObject({ field: 'status' })
+    expect(JSON.parse(rawA!).draft.children[0]).toMatchObject({ field: 'title' })
+    expect(JSON.parse(rawB!).draft.children[0]).toMatchObject({ field: 'status' })
     wrapper.unmount()
   })
 
@@ -407,9 +407,9 @@ describe('useFilter — multi-filter integration (full slice 14 acceptance)', ()
     expect(aSaved).not.toBeNull()
     expect(bSaved).not.toBeNull()
     // A's saved draft includes its in-progress child (URL would not).
-    expect(JSON.parse(aSaved!).children).toHaveLength(2)
+    expect(JSON.parse(aSaved!).draft.children).toHaveLength(2)
     // B is single-finished-child only.
-    expect(JSON.parse(bSaved!).children).toHaveLength(1)
+    expect(JSON.parse(bSaved!).draft.children).toHaveLength(1)
 
     // 4. Reactive surfaces — A has a dangling in-progress error, B is clean.
     expect(filterA.errors.value.length).toBeGreaterThan(0)

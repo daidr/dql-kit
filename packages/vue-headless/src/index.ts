@@ -10,7 +10,12 @@ export {
   type RelativeUnitLabels,
   type RendererSet,
 } from './plugin.ts'
-export { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
+export {
+  createAsyncOrchestrator,
+  type AsyncOrchestratorOptions,
+  type SearchSlotState,
+} from './asyncOrchestrator.ts'
+export { resolveFieldLabel, resolveLabel, resolveOpLabel } from './labels.ts'
 export {
   createMemoryUrlAdapter,
   type UrlAdapter,
