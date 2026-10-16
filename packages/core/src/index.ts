@@ -33,3 +33,8 @@ export {
   isArrayField,
   isBuiltinField,
 } from './field-guards.ts'
+export {
+  toJsonSchema,
+  type JsonSchema,
+  type JsonSchemaObject,
+} from './json-schema.ts'
