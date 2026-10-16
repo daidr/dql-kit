@@ -119,6 +119,44 @@ describe('useFilter — sync via vueRouterUrlAdapter', () => {
     wrapper.unmount()
   })
 
+  it('encodes the filter exactly once in the address bar', async () => {
+    const { filter, router, wrapper } = await buildHarness({ sync: 'url' })
+    filter.actions.addCondition([], { field: 'title', op: 'eq', value: '50% off' })
+    await flushPromises()
+    const fullPath = router.currentRoute.value.fullPath
+    // One decode of the query string gives back toUrl's output verbatim.
+    expect(new URLSearchParams(fullPath.slice(fullPath.indexOf('?'))).get('filter'))
+      .toBe(toUrl(filter.valid.value))
+    expect(fullPath).not.toContain('%2522')
+    wrapper.unmount()
+  })
+
+  it('still opens links written by the old double-encoding toUrl', async () => {
+    const ast: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'legacy' }],
+    }
+    // Old toUrl percent-encoded, then the router encoded again.
+    const legacy = encodeURIComponent(encodeURIComponent(toUrl(ast)))
+    const { filter, wrapper } = await buildHarness({
+      sync: 'url',
+      initialPath: `/?filter=${legacy}`,
+    })
+    expect(filter.valid.value).toEqual(ast)
+    expect(filter.dropped.value).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('an unsupported envelope version is reported instead of crashing setup', async () => {
+    const { filter, wrapper } = await buildHarness({
+      sync: 'url',
+      initialPath: `/?filter=${encodeURIComponent('{"v":1}')}`,
+    })
+    expect(filter.valid.value).toEqual({ combinator: 'and', children: [] })
+    expect(filter.dropped.value).toEqual([{ path: [], code: 'unsupported_version', version: 1 }])
+    wrapper.unmount()
+  })
+
   it('empty Valid AST removes the query key (writes undefined)', async () => {
     const { filter, router, wrapper } = await buildHarness({
       sync: 'url',
@@ -241,8 +279,8 @@ describe('useFilter — dropped[] schema evolution', () => {
     })
     expect(filter.dropped.value).toHaveLength(1)
     expect(filter.dropped.value[0]).toMatchObject({
-      reason: 'unknown_field',
-      detail: { field: 'mystery' },
+      code: 'unknown_field',
+      field: 'mystery',
     })
     expect(filter.valid.value.children).toHaveLength(0)
     wrapper.unmount()
@@ -269,7 +307,7 @@ describe('useFilter — dropped[] schema evolution', () => {
     await router.push({ query: { filter: stale } })
     await flushPromises()
     expect(filter.dropped.value).toHaveLength(1)
-    expect(filter.dropped.value[0]?.reason).toBe('unknown_field')
+    expect(filter.dropped.value[0]?.code).toBe('unknown_field')
     wrapper.unmount()
   })
 })
@@ -322,7 +360,7 @@ describe("useFilter — vueRouterUrlAdapter + commitMode: 'manual'", () => {
       { field: 'title', op: 'eq', value: 'committed' },
     ])
     expect(replaceCalls.length).toBe(writesBefore)
-    expect(router.currentRoute.value.query.filter).toBe(decodeURIComponent(encoded))
+    expect(router.currentRoute.value.query.filter).toBe(encoded)
     wrapper.unmount()
   })
 

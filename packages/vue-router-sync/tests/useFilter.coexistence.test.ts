@@ -252,7 +252,7 @@ describe('useFilter — multi-filter reactive surface independence', () => {
     const path = `/?a=${encodeURIComponent(JSON.stringify(compactStaleA))}`
     const { filterA, filterB, wrapper } = await buildPair({ initialPath: path })
     expect(filterA.dropped.value).toHaveLength(1)
-    expect(filterA.dropped.value[0]?.reason).toBe('unknown_field')
+    expect(filterA.dropped.value[0]?.code).toBe('unknown_field')
     expect(filterB.dropped.value).toEqual([])
 
     // Errors: introduce an in-progress condition on A only.

@@ -21,8 +21,13 @@
  *     suppresses duplicate `read() === encoded` writes.
  *   - `watch(cb)` registers a listener for *external* URL changes
  *     (back/forward, pasted link, sibling navigation). The callback
- *     receives the raw encoded string. Returns a teardown function;
+ *     receives the raw value string. Returns a teardown function;
  *     useFilter calls it on unmount via effectScope.
+ *
+ * Values are `toUrl` output: plain (not percent-encoded) JSON. The
+ * adapter owns URL encoding — `read` returns the decoded query value
+ * and `write` hands the plain string to whatever builds the URL, so it
+ * is encoded exactly once.
  */
 export interface UrlAdapter {
   read: () => string

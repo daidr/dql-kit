@@ -1,4 +1,4 @@
-import type { FilterSchema, ValidAST, ValidNode } from '@dql-kit/core'
+import type { CheckedAST, FilterSchema, ValidNode } from '@dql-kit/core'
 import { and, or, sql, type AnyColumn, type SQL } from 'drizzle-orm'
 import { drizzleOps } from './ops.ts'
 import type {
@@ -17,7 +17,7 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
   // Construction-time merge: built-in ops first, user `ops` override on
   // top. Result is frozen-by-convention — there is no post-construction
   // `registerOp`. Add custom ops via the `ops` option instead.
-  const ops: Record<string, OpTranslator> = { ...drizzleOps, ...(opts.ops ?? {}) }
+  const ops: Record<string, OpTranslator> = { ...drizzleOps, ...opts.ops }
 
   const columns: Record<string, AnyColumn> = {}
   const explicit = (opts.columns ?? {}) as Record<string, AnyColumn | undefined>
@@ -36,6 +36,10 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
     columns[fieldKey] = col
   }
 
+  const allowedOps = new Map<string, ReadonlySet<string>>(
+    Object.entries(opts.schema.fields).map(([key, def]) => [key, new Set(def.ops.map((o) => o.name))]),
+  )
+
   const translateNode = (node: ValidNode): SQL => {
     if (isGroupNode(node)) {
       if (node.children.length === 0) return sql`true`
@@ -52,7 +56,16 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
         `[dql-kit/drizzle] AST references unknown field "${node.field}" not present in schema.`,
       )
     }
-    const opFn = ops[node.op]
+    // The CheckedAST brand already guarantees this; re-checked because a
+    // cast defeats the brand, and an op the field doesn't declare would
+    // otherwise reach an op handler built for a different column type.
+    if (!allowedOps.get(node.field)?.has(node.op)) {
+      throw new Error(
+        `[dql-kit/drizzle] Op "${node.op}" is not allowed on field "${node.field}". `
+          + `Parse untrusted input with parseAst() before translating.`,
+      )
+    }
+    const opFn = Object.prototype.hasOwnProperty.call(ops, node.op) ? ops[node.op] : undefined
     if (!opFn) {
       throw new Error(
         `[dql-kit/drizzle] No SQL translator registered for op "${node.op}". `
@@ -69,7 +82,7 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
   }
 
   return {
-    toWhere(ast: ValidAST): SQL {
+    toWhere(ast: CheckedAST): SQL {
       if (ast.children.length === 0) return sql`true`
       return translateNode(ast)
     },

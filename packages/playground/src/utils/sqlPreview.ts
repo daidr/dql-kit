@@ -1,4 +1,4 @@
-import type { FieldDef, FilterSchema, ValidAST } from '@dql-kit/core'
+import { parseAst, type FieldDef, type FilterSchema, type ValidAST } from '@dql-kit/core'
 import { createDrizzleTranslator } from '@dql-kit/drizzle'
 import {
   PgDialect,
@@ -59,13 +59,22 @@ export const previewSql = (
   schema: FilterSchema,
   ast: ValidAST,
 ): SqlPreview => {
+  // Same path a server takes: parse the AST against the schema, then
+  // translate. Only a parsed (CheckedAST) value is accepted by toWhere.
+  const parsed = parseAst(ast, schema)
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      error: parsed.errors.map((e) => `${e.code} @ [${e.path.join(', ')}]`).join('\n'),
+    }
+  }
   try {
     const table = buildTable(schema)
     const translator = createDrizzleTranslator({
       schema,
       columns: table,
     })
-    const where = translator.toWhere(ast)
+    const where = translator.toWhere(parsed.ast)
     const { sql, params } = dialect.sqlToQuery(where)
     return { ok: true, sql: `SELECT *\nFROM virtual\nWHERE ${sql};`, params }
   } catch (err) {

@@ -12,6 +12,7 @@ export {
   isCondition,
 } from './ast.ts'
 export { COMPACT_KEYS, toUrl, fromUrl } from './url.ts'
+export { parseAst, DEFAULT_AST_LIMITS } from './parse.ts'
 export { RELATIVE_UNITS, isRelativeUnit, type RelativeUnit } from './check.ts'
 export {
   isStringField,

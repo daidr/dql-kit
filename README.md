@@ -12,17 +12,18 @@ Type-safe, schema-driven filter / query AST library for dashboards.
 
 | Package | Description |
 |---|---|
-| [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, URL serialization. Zero ORM / framework / i18n deps. |
-| [`@dql-kit/drizzle`](./packages/drizzle) | Drizzle ORM translator. AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
+| [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, `parseAst` for untrusted input, URL serialization. Zero ORM / framework / i18n deps. |
+| [`@dql-kit/drizzle`](./packages/drizzle) | Drizzle ORM translator, **PostgreSQL only**. Parsed AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` composable + `createDqlKit` Vue plugin. Pluggable URL sync via `UrlAdapter` (`vue-router` not imported here). |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` — `UrlAdapter` for vue-router apps. |
-| [`@dql-kit/vue-ui`](./packages/vue-ui) | Reference `<FilterBuilder>` + built-in input renderers. Optional — apps usually wrap `useFilter` in their own components. |
+| [`@dql-kit/vue-ui`](./packages/vue-ui) | Reference `<FilterPanel>` / `<FilterButton>` + built-in input renderers. Optional — apps usually wrap `useFilter` in their own components. |
 
 ## Architecture
 
 ```
 schema (core)
   ├─→ analyze (core)         draft → { ast, errors } in one walk
+  ├─→ parseAst (core)        untrusted JSON → CheckedAST | errors (same walk + limits)
   ├─→ URL serializer (core)
   ├─→ SQL translator (drizzle)
   └─→ UI renderer (vue-ui / app)
@@ -101,14 +102,20 @@ const filter = useFilter({
 // filter.valid           — live ValidAST (auto) / pre-commit (manual)
 // filter.committedValid  — what the URL / list-fetch should observe
 // filter.errors          — ValidationError[]
-// filter.dropped         — Nodes silently dropped on URL → schema mismatch
+// filter.dropped         — Nodes dropped while reading the URL, with the reason
 // filter.search.setQuery(fieldKey, q) — drive id autocomplete
 // filter.actions.{addCondition, updateNode, removeNode, clear, ...}
 ```
 
 ### 4. Translate AST to SQL on the backend
 
+The translator only accepts a `CheckedAST`, the output of `parseAst`. Never
+hand a request body to it directly: `parseAst` checks every field, op, value
+type and size limit against the schema, so a bad request becomes a 400
+instead of a SQL error.
+
 ```ts
+import { parseAst } from '@dql-kit/core'
 import { createDrizzleTranslator, drizzleOps } from '@dql-kit/drizzle'
 import { articleFilterSchema } from '@/schema'
 import { table } from './db'
@@ -137,23 +144,38 @@ const translator = createDrizzleTranslator({
   },
 })
 
-// Use in a query:
-const rows = await db.select().from(table.articles).where(translator.toWhere(ast))
+// Use in a query. `body.filter` is untrusted JSON from the request.
+// Limits default to { maxDepth: 8, maxNodes: 200, maxListLength: 100 }.
+const parsed = parseAst(body.filter, articleFilterSchema)
+if (!parsed.ok) throw new BadRequest(parsed.errors)
+const rows = await db.select().from(table.articles).where(translator.toWhere(parsed.ast))
 ```
+
+**PostgreSQL only.** The built-in op handlers emit PG-specific SQL (`ILIKE`,
+`= ANY(col)`, `@>`, `cardinality`, `NOW() - INTERVAL`).
+
+**`date` fields compare in UTC days.** `'2024-01-01'` becomes midnight UTC. On
+a PG `date` column that's exact; on a `timestamp` column, `eq` / `before` /
+`after` / `between` cut days at UTC midnight. Map `date` fields to `date`
+columns, or use `datetime` when the local day matters.
 
 ## Development
 
 ```bash
 bun install
+bun run build        # core and drizzle dist are consumed by story-verse at runtime
 bun run type-check
 bun run test
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same build, type-check and test steps.
 
 ## Key design choices (short)
 
 - **No NOT operator** — `neq` / `notIn` / `notContains` cover the use case; nesting NOT is a UX trap.
 - **AST is plain JSON** — no functions, no class instances. Round-trips through URL / `JSON.parse`.
 - **Two AST layers** — `DraftAST` (editing) and `ValidAST` (executable). `analyze` produces both at once.
+- **One set of rules for every entry point** — `analyze` (drafts), `parseAst` (request bodies) and `fromUrl` (links) share one walker; `fromUrl` never throws.
 - **`f.custom({ delegateTo })`** — custom typeIds inherit a builtin's UI / SQL / value-type behaviour by default; the typeId is only a routing tag for adapter overrides.
 - **Single instance, no globals** — `createDqlKit({...})` returns a Vue plugin; per-app state lives there. Safe for SSR / multi-tenant.
 - **URL sync is pluggable** — `useFilter({ sync })` accepts any `UrlAdapter` (memory, vue-router, custom). vue-router is in its own package.

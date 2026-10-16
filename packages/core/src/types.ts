@@ -128,11 +128,54 @@ export type ValidationError =
   | { path: NodePath, code: 'value_shape_mismatch', op: string, expected: ValueShape }
   | { path: NodePath, code: 'incomplete', missing: 'field' | 'op' | 'value' }
 
-export type DroppedNode = {
-  path: NodePath
-  reason: ValidationError['code']
-  detail?: unknown
+/**
+ * Everything `parseAst` / `fromUrl` can report: the draft-level
+ * `ValidationError`s plus problems that only untrusted input can have.
+ *
+ * - `invalid_node`: not a group or condition (wrong JSON type, bad
+ *   combinator, non-array children, non-string field/op).
+ * - `parse_error`: the URL string is not JSON.
+ * - `unsupported_version`: the URL uses a newer envelope this build
+ *   can't read.
+ * - `limit_exceeded`: one of `AstLimits` was hit.
+ */
+export type ParseError =
+  | ValidationError
+  | { path: NodePath, code: 'invalid_node', message: string }
+  | { path: NodePath, code: 'parse_error' }
+  | { path: NodePath, code: 'unsupported_version', version: number }
+  | { path: NodePath, code: 'limit_exceeded', limit: keyof AstLimits, max: number }
+
+export type ParseErrorCode = ParseError['code']
+
+/** A node `fromUrl` dropped, and why. Same shape as `ParseError`. */
+export type DroppedNode = ParseError
+
+/**
+ * Bounds applied to untrusted ASTs. Depth counts group nesting (the
+ * root group is depth 1); nodes counts groups and conditions;
+ * list length bounds `list`-shaped values such as `in`.
+ */
+export type AstLimits = {
+  maxDepth: number
+  maxNodes: number
+  maxListLength: number
 }
+
+// Nominal brand: only `parseAst` produces a `CheckedAST`. The symbol is
+// type-level only; nothing is set at runtime.
+declare const checkedBrand: unique symbol
+
+/**
+ * A `ValidAST` that went through `parseAst`: every field, op, value and
+ * limit has been checked against the schema. SQL translators accept only
+ * this type, so translating an unchecked AST doesn't compile.
+ */
+export type CheckedAST = ValidAST & { readonly [checkedBrand]: true }
+
+export type ParseResult =
+  | { ok: true, ast: CheckedAST }
+  | { ok: false, errors: ParseError[] }
 
 // Result of `analyze(draft, schema)` — a single tree walk produces both
 // the pruned ValidAST (for executing/serialising) and the per-node

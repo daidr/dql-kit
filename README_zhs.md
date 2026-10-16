@@ -12,17 +12,18 @@
 
 | Package | 描述 |
 |---|---|
-| [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、URL 序列化。零 ORM / 框架 / i18n 依赖。 |
-| [`@dql-kit/drizzle`](./packages/drizzle) | Drizzle ORM 翻译器。AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
+| [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、解析不可信输入的 `parseAst`、URL 序列化。零 ORM / 框架 / i18n 依赖。 |
+| [`@dql-kit/drizzle`](./packages/drizzle) | Drizzle ORM 翻译器，**仅支持 PostgreSQL**。解析后的 AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` 组合式函数 + `createDqlKit` Vue 插件。通过 `UrlAdapter` 实现可插拔的 URL 同步（此处不引入 `vue-router`）。 |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` —— 面向 vue-router 应用的 `UrlAdapter`。 |
-| [`@dql-kit/vue-ui`](./packages/vue-ui) | 参考实现 `<FilterBuilder>` + 内置输入渲染器。可选 —— 应用通常会基于 `useFilter` 自行封装组件。 |
+| [`@dql-kit/vue-ui`](./packages/vue-ui) | 参考实现 `<FilterPanel>` / `<FilterButton>` + 内置输入渲染器。可选 —— 应用通常会基于 `useFilter` 自行封装组件。 |
 
 ## 架构
 
 ```
 schema (core)
   ├─→ analyze (core)         draft → { ast, errors }，单次遍历
+  ├─→ parseAst (core)        不可信 JSON → CheckedAST | errors（同一遍走查 + 上限）
   ├─→ URL serializer (core)
   ├─→ SQL translator (drizzle)
   └─→ UI renderer (vue-ui / app)
@@ -101,14 +102,19 @@ const filter = useFilter({
 // filter.valid           —— 实时 ValidAST（auto 模式 / manual 模式 commit 前）
 // filter.committedValid  —— URL / 列表查询应观察的值
 // filter.errors          —— ValidationError[]
-// filter.dropped         —— URL → schema 不匹配时被静默丢弃的节点
+// filter.dropped         —— 读取 URL 时被丢弃的节点及原因
 // filter.search.setQuery(fieldKey, q) —— 驱动 id 自动补全
 // filter.actions.{addCondition, updateNode, removeNode, clear, ...}
 ```
 
 ### 4. 在后端将 AST 翻译为 SQL
 
+翻译器只接受 `parseAst` 返回的 `CheckedAST`。不要把请求体直接交给它：
+`parseAst` 会按 schema 检查每个字段、op、值类型和大小上限，坏请求因此是 400，
+而不是 SQL 报错。
+
 ```ts
+import { parseAst } from '@dql-kit/core'
 import { createDrizzleTranslator, drizzleOps } from '@dql-kit/drizzle'
 import { articleFilterSchema } from '@/schema'
 import { table } from './db'
@@ -137,17 +143,31 @@ const translator = createDrizzleTranslator({
   },
 })
 
-// 在查询中使用：
-const rows = await db.select().from(table.articles).where(translator.toWhere(ast))
+// 在查询中使用。`body.filter` 是请求里不可信的 JSON。
+// 上限默认 { maxDepth: 8, maxNodes: 200, maxListLength: 100 }。
+const parsed = parseAst(body.filter, articleFilterSchema)
+if (!parsed.ok) throw new BadRequest(parsed.errors)
+const rows = await db.select().from(table.articles).where(translator.toWhere(parsed.ast))
 ```
+
+**仅支持 PostgreSQL。** 内置 op 生成的是 PG 专有 SQL（`ILIKE`、`= ANY(col)`、
+`@>`、`cardinality`、`NOW() - INTERVAL`）。
+
+**`date` 字段按 UTC 日期比较。** `'2024-01-01'` 会变成 UTC 零点。映射到 PG
+`date` 列时是精确的；映射到 `timestamp` 列时，`eq` / `before` / `after` /
+`between` 按 UTC 零点切天。`date` 字段请映射到 `date` 列，需要本地日期语义时用
+`datetime`。
 
 ## 开发
 
 ```bash
 bun install
+bun run build        # story-verse 运行时会加载 core 和 drizzle 的 dist
 bun run type-check
 bun run test
 ```
+
+CI（`.github/workflows/ci.yml`）跑同样的 build、type-check 和 test。
 
 ## 关键设计选择（速览）
 

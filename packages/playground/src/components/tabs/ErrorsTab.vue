@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ValidationError } from '@dql-kit/core'
+import type { ParseError } from '@dql-kit/core'
 import { computed } from 'vue'
 import { usePlaygroundStore } from '../../store.ts'
 
@@ -10,7 +10,7 @@ const dropped = computed(() => store.filter.value.dropped.value)
 const formatPath = (p: number[]) =>
   p.length === 0 ? 'root' : `root.${p.join('.')}`
 
-const messageOf = (e: ValidationError): string => {
+const messageOf = (e: ParseError): string => {
   switch (e.code) {
     case 'unknown_field':
       return `未知字段：${e.field}`
@@ -22,6 +22,14 @@ const messageOf = (e: ValidationError): string => {
       return `值形状不匹配：${e.op} 期望 ${e.expected}`
     case 'incomplete':
       return `缺少 ${e.missing}`
+    case 'invalid_node':
+      return `节点格式错误：${e.message}`
+    case 'parse_error':
+      return '无法解析为 JSON'
+    case 'unsupported_version':
+      return `不支持的 URL 版本 ${e.version}`
+    case 'limit_exceeded':
+      return `超出限制 ${e.limit}（上限 ${e.max}）`
   }
 }
 </script>
@@ -49,7 +57,8 @@ const messageOf = (e: ValidationError): string => {
       <ol class="error-list">
         <li v-for="(d, i) in dropped" :key="i" class="error-list__item">
           <code class="error-list__path">{{ formatPath(d.path) }}</code>
-          <span class="error-list__code">{{ d.reason }}</span>
+          <span class="error-list__code">{{ d.code }}</span>
+          <span class="error-list__msg">{{ messageOf(d) }}</span>
         </li>
       </ol>
     </div>

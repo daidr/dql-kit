@@ -54,8 +54,7 @@ describe('toUrl', () => {
       children: [{ field: 'title', op: 'eq', value: 'hello' }],
     }
     const encoded = toUrl(ast)
-    const json = decodeURIComponent(encoded)
-    const obj = JSON.parse(json)
+    const obj = JSON.parse(encoded)
     expect(obj).toEqual({
       c: 'and',
       n: [{ f: 'title', o: 'eq', v: 'hello' }],
@@ -68,7 +67,7 @@ describe('toUrl', () => {
       children: [{ field: 'title', op: 'isEmpty', value: undefined }],
     }
     const encoded = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(encoded))
+    const obj = JSON.parse(encoded)
     expect(obj.n[0]).toEqual({ f: 'title', o: 'isEmpty' })
     expect('v' in obj.n[0]).toBe(false)
   })
@@ -131,7 +130,7 @@ describe('fromUrl', () => {
       children: [{ field: 'title', op, value: v }],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     expect(obj.n[0]).toEqual({ f: 'title', o: op, v })
     expect(Array.isArray(obj.n[0].v)).toBe(true)
     const result = fromUrl(url, schema)
@@ -154,7 +153,7 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
+    expect(result.dropped[0]?.code).toBe('value_shape_mismatch')
     expect(result.ast.children).toHaveLength(0)
   })
 
@@ -173,7 +172,7 @@ describe('fromUrl', () => {
       ],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     // No string coercion: numbers remain numbers in the wire JSON.
     for (const child of obj.n) {
       if (Array.isArray(child.v)) {
@@ -192,7 +191,7 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
+    expect(result.dropped[0]?.code).toBe('value_shape_mismatch')
   })
 
   test.each([true, false])('round-trip lossless on boolean eq with %p', (v) => {
@@ -201,7 +200,7 @@ describe('fromUrl', () => {
       children: [{ field: 'isActive', op: 'eq', value: v }],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     expect(typeof obj.n[0].v).toBe('boolean')
     const result = fromUrl(url, schema)
     expect(result.ast).toEqual(ast)
@@ -217,7 +216,7 @@ describe('fromUrl', () => {
       ],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     // Discriminants stay in their original JSON type — strings stay strings,
     // numbers stay numbers (no coercion via toString).
     expect(obj.n[0].v).toBe('draft')
@@ -245,7 +244,7 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
+    expect(result.dropped[0]?.code).toBe('value_type_mismatch')
   })
 
   test('round-trip lossless on date eq + before + after with ISO calendar values', () => {
@@ -258,7 +257,7 @@ describe('fromUrl', () => {
       ],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     for (const child of obj.n) {
       expect(typeof child.v).toBe('string')
       expect(child.v).toMatch(/^\d{4}-\d{2}-\d{2}$/)
@@ -301,7 +300,7 @@ describe('fromUrl', () => {
       ],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     expect(obj.n[0].v).toEqual({ amount: 7, unit: 'day' })
     expect(typeof obj.n[0].v.amount).toBe('number')
     const result = fromUrl(url, schema)
@@ -314,7 +313,7 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
+    expect(result.dropped[0]?.code).toBe('value_type_mismatch')
   })
 
   test('decoded inLast with disallowed unit is dropped (value_shape_mismatch)', () => {
@@ -325,7 +324,7 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
+    expect(result.dropped[0]?.code).toBe('value_shape_mismatch')
   })
 
   test('round-trip lossless on array<string> contains + containsAll + isEmpty', () => {
@@ -348,7 +347,7 @@ describe('fromUrl', () => {
       children: [{ field: 'intTags', op: 'containsAll', value: [1, 2, 3] }],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     expect(obj.n[0].v.every((x: unknown) => typeof x === 'number')).toBe(true)
     const result = fromUrl(url, schema)
     expect(result.ast).toEqual(ast)
@@ -379,8 +378,9 @@ describe('fromUrl', () => {
     const result = fromUrl(url, narrowedSchema)
     expect(result.dropped).toHaveLength(1)
     expect(result.dropped[0]).toMatchObject({
-      reason: 'op_not_allowed',
-      detail: { field: 'title', op: 'eq' },
+      code: 'op_not_allowed',
+      field: 'title',
+      op: 'eq',
     })
     // Path must point at the offending node so a UI can render context.
     expect(result.dropped[0]?.path).toEqual([0])
@@ -407,7 +407,7 @@ describe('fromUrl', () => {
       ],
     }
     const url = toUrl(ast)
-    const obj = JSON.parse(decodeURIComponent(url))
+    const obj = JSON.parse(url)
     // The codec is value-shape agnostic: any JSON value is preserved.
     expect(obj.n[0].v).toEqual({ amount: 1299, currency: 'USD', tags: ['retail'] })
     const result = fromUrl(url, moneySchema)
@@ -429,16 +429,8 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toEqual([
-      {
-        path: [1],
-        reason: 'unknown_field',
-        detail: { field: 'mystery' },
-      },
-      {
-        path: [2],
-        reason: 'value_type_mismatch',
-        detail: { field: 'rating', op: 'eq' },
-      },
+      { path: [1], code: 'unknown_field', field: 'mystery' },
+      { path: [2], code: 'value_type_mismatch', expected: 'number', got: 'string' },
     ])
     // Surviving condition makes it through unchanged.
     expect(result.ast.children).toHaveLength(1)
@@ -452,7 +444,7 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
+    expect(result.dropped[0]?.code).toBe('value_type_mismatch')
   })
 
   test('round-trip lossless on (A and B) or C nested shape', () => {
@@ -531,7 +523,7 @@ describe('fromUrl', () => {
     const result = fromUrl(url, evolvedSchema)
     expect(result.dropped).toHaveLength(1)
     expect(result.dropped[0]).toMatchObject({
-      reason: 'unknown_field',
+      code: 'unknown_field',
     })
     expect(result.ast.children).toHaveLength(1)
   })
@@ -542,27 +534,163 @@ describe('fromUrl', () => {
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)
     expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_type_mismatch')
+    expect(result.dropped[0]?.code).toBe('value_type_mismatch')
   })
 
-  test('version envelope is recognized and rejected by stub', () => {
-    const compact = { v: 1, ast: {} }
-    const url = encodeURIComponent(JSON.stringify(compact))
-    expect(() => fromUrl(url, schema)).toThrow(/envelope version 1/)
+  test('unknown envelope version is reported, not thrown', () => {
+    const result = fromUrl(JSON.stringify({ v: 1, ast: {} }), schema)
+    expect(result.ast).toEqual(emptyAst())
+    expect(result.dropped).toEqual([{ path: [], code: 'unsupported_version', version: 1 }])
+    // Legacy-encoded form takes the same path.
+    expect(fromUrl(encodeURIComponent('{"v":1}'), schema).dropped[0]?.code)
+      .toBe('unsupported_version')
   })
 
-  test('isEmpty with stray v is dropped', () => {
+  test('isEmpty with stray v keeps the condition and reports it (same as analyze)', () => {
     const compact = { c: 'and', n: [{ f: 'title', o: 'isEmpty', v: 'oops' }] }
-    const url = encodeURIComponent(JSON.stringify(compact))
-    const result = fromUrl(url, schema)
-    expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]?.reason).toBe('value_shape_mismatch')
-    expect(result.ast.children).toHaveLength(0)
+    const result = fromUrl(JSON.stringify(compact), schema)
+    expect(result.dropped).toEqual([
+      { path: [0], code: 'value_shape_mismatch', op: 'isEmpty', expected: 'none' },
+    ])
+    expect(result.ast.children).toEqual([{ field: 'title', op: 'isEmpty', value: undefined }])
   })
 
-  test('malformed JSON yields empty AST + drop entry', () => {
+  test('malformed JSON yields empty AST + parse_error', () => {
     const result = fromUrl('not%20json', schema)
     expect(result.ast).toEqual(emptyAst())
-    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped).toEqual([{ path: [], code: 'parse_error' }])
+  })
+
+  test('malformed percent-encoding yields parse_error instead of throwing', () => {
+    expect(fromUrl('%E0%A4%A', schema).dropped).toEqual([{ path: [], code: 'parse_error' }])
+  })
+
+  test('root that is a condition, not a group, is reported', () => {
+    const result = fromUrl(JSON.stringify({ f: 'title', o: 'eq', v: 'x' }), schema)
+    expect(result.ast).toEqual(emptyAst())
+    expect(result.dropped).toEqual([
+      { path: [], code: 'invalid_node', message: expect.any(String) },
+    ])
+  })
+
+  test.each([
+    ['null', 'null'],
+    ['array', '[]'],
+    ['number', '42'],
+  ])('root that is %s is reported', (_label, raw) => {
+    const result = fromUrl(raw, schema)
+    expect(result.ast).toEqual(emptyAst())
+    expect(result.dropped[0]?.code).toBe('invalid_node')
+  })
+
+  test('malformed nodes are dropped as invalid_node, siblings survive', () => {
+    const compact = {
+      c: 'and',
+      n: [
+        'oops',
+        { c: 'xor', n: [] },
+        { c: 'and', n: 'nope' },
+        { f: 5, o: 'eq', v: 1 },
+        { f: 'title', o: 'eq', v: 'kept' },
+      ],
+    }
+    const result = fromUrl(JSON.stringify(compact), schema)
+    expect(result.dropped.map((d) => [d.path, d.code])).toEqual([
+      [[0], 'invalid_node'],
+      [[1], 'invalid_node'],
+      [[2], 'invalid_node'],
+      [[3], 'invalid_node'],
+    ])
+    expect(result.ast).toEqual({
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'kept' }],
+    })
+  })
+
+  test('prototype keys are not treated as schema fields', () => {
+    const compact = { c: 'and', n: [{ f: 'constructor', o: 'eq', v: 'x' }] }
+    const result = fromUrl(JSON.stringify(compact), schema)
+    expect(result.dropped[0]).toMatchObject({ code: 'unknown_field', field: 'constructor' })
+  })
+})
+
+describe('fromUrl limits', () => {
+  const nested = (depth: number): unknown => {
+    let node: unknown = { f: 'title', o: 'eq', v: 'x' }
+    for (let i = 0; i < depth; i++) node = { c: i % 2 ? 'and' : 'or', n: [node, { f: 'rating', o: 'eq', v: i }] }
+    return node
+  }
+
+  test('20k-deep nesting does not blow the stack', () => {
+    // Built as a string: JSON.stringify on a 20k-deep object would itself recurse.
+    const depth = 20_000
+    const raw = '{"c":"and","n":['.repeat(depth) + '{"f":"title","o":"eq","v":"x"}' + ']}'.repeat(depth)
+    let result: ReturnType<typeof fromUrl> | undefined
+    expect(() => { result = fromUrl(raw, schema) }).not.toThrow()
+    expect(result!.dropped.some((d) => d.code === 'limit_exceeded' || d.code === 'parse_error')).toBe(true)
+  })
+
+  test('nesting past maxDepth drops the deep subtree and keeps the rest', () => {
+    const result = fromUrl(JSON.stringify(nested(3)), schema, { maxDepth: 2 })
+    expect(result.dropped).toEqual([
+      { path: [0, 0], code: 'limit_exceeded', limit: 'maxDepth', max: 2 },
+    ])
+    // Depth-2 group lost its depth-3 child and collapsed to its other child.
+    expect(result.ast).toEqual({
+      combinator: 'or',
+      children: [
+        { field: 'rating', op: 'eq', value: 1 },
+        { field: 'rating', op: 'eq', value: 2 },
+      ],
+    })
+  })
+
+  test('nodes past maxNodes are dropped with a single report', () => {
+    const compact = {
+      c: 'and',
+      n: Array.from({ length: 10 }, (_, i) => ({ f: 'rating', o: 'eq', v: i })),
+    }
+    const result = fromUrl(JSON.stringify(compact), schema, { maxNodes: 4 })
+    // Root + 3 conditions fit.
+    expect(result.ast.children).toHaveLength(3)
+    expect(result.dropped).toEqual([
+      { path: [3], code: 'limit_exceeded', limit: 'maxNodes', max: 4 },
+    ])
+  })
+
+  test('list values past maxListLength are dropped', () => {
+    const compact = { c: 'and', n: [{ f: 'rating', o: 'in', v: [1, 2, 3] }] }
+    const result = fromUrl(JSON.stringify(compact), schema, { maxListLength: 2 })
+    expect(result.ast.children).toHaveLength(0)
+    expect(result.dropped).toEqual([
+      { path: [0], code: 'limit_exceeded', limit: 'maxListLength', max: 2 },
+    ])
+  })
+})
+
+describe('toUrl / fromUrl encoding', () => {
+  const ast: ValidAST = {
+    combinator: 'and',
+    children: [{ field: 'title', op: 'contains', value: '50% off & more' }],
+  }
+
+  test('toUrl emits plain JSON, leaving URL encoding to the URL layer', () => {
+    expect(toUrl(ast)).toBe('{"c":"and","n":[{"f":"title","o":"contains","v":"50% off & more"}]}')
+  })
+
+  test('round-trips values containing % and &', () => {
+    expect(fromUrl(toUrl(ast), schema)).toEqual({ ast, dropped: [] })
+  })
+
+  test('survives a URLSearchParams round-trip encoded exactly once', () => {
+    const qs = new URLSearchParams({ filter: toUrl(ast) }).toString()
+    expect(qs.startsWith('filter=%7B%22c%22')).toBe(true)
+    const back = new URLSearchParams(qs).get('filter')!
+    expect(fromUrl(back, schema)).toEqual({ ast, dropped: [] })
+  })
+
+  test('still reads links produced by the old percent-encoding toUrl', () => {
+    const legacy = encodeURIComponent(toUrl(ast))
+    expect(fromUrl(legacy, schema)).toEqual({ ast, dropped: [] })
   })
 })
