@@ -1,5 +1,6 @@
 import type {
   DraftAST,
+  DraftNode,
   DroppedNode,
   FieldDef,
   FilterSchema,
@@ -75,7 +76,18 @@ export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
   commitMode?: CommitMode
   queryKey?: string
   debounceMs?: number
+  /**
+   * Mirror the draft into sessionStorage so in-progress edits survive a
+   * reload. With URL sync, a saved draft is only restored when it was
+   * edited on top of the filter the URL currently carries.
+   */
   persistDraft?: 'session' | 'none'
+  /**
+   * Collapse redundant nesting after every action: a group whose only
+   * child is another group is replaced by that child (root included).
+   * Off by default.
+   */
+  flattenDraft?: boolean
 }
 
 export type LabelStatus<ID = string | number> =
@@ -113,6 +125,18 @@ export type FilterActions = {
    * Root path `[]` is supported: the root group itself is wrapped.
    */
   wrapGroup: (path: number[], options?: { outerCombinator?: 'and' | 'or' }) => void
+  /**
+   * Dissolve the group at `path`, splicing its children into the parent
+   * at the same index (they take on the parent's combinator). At the
+   * root `[]` this only applies when the root's sole child is a group,
+   * which then becomes the root.
+   */
+  unwrapGroup: (path: number[]) => void
+  /**
+   * Replace the node at `path` with a copy of `node`. At the root `[]`
+   * the node must be a group.
+   */
+  replaceNode: (path: number[], node: DraftNode) => void
   clear: () => void
 }
 

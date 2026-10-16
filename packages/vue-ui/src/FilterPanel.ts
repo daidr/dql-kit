@@ -4,13 +4,14 @@ import {
   type DraftGroup,
   type DraftNode,
   type FieldDef,
-  type Label,
   type OpDef,
   type ValueShape,
 } from '@dql-kit/core'
 import {
   dqlKitInjectionKey,
   filterInjectionKey,
+  resolveLabel,
+  resolveOpLabel,
   type DqlKitState,
   type UseFilterReturn,
 } from '@dql-kit/vue-headless'
@@ -27,11 +28,6 @@ import {
   StringInput,
   resolveRenderer as resolveRendererFn,
 } from './renderers.ts'
-
-const resolveLabel = (label: Label | undefined, fallback: string): string => {
-  if (label === undefined) return fallback
-  return typeof label === 'function' ? label() : label
-}
 
 // Bind the renderer resolver to the active DqlKit instance. Returns
 // a `(typeId, shape, delegateTo)` closure so the per-condition render
@@ -50,13 +46,7 @@ const useRendererResolver = () => {
 // name.
 const useOpLabelResolver = () => {
   const state = inject(dqlKitInjectionKey, null) as DqlKitState | null
-  return (op: OpDef): string => {
-    const override = state?.opLabels[op.name]
-    if (override !== undefined) {
-      return typeof override === 'function' ? override() : override
-    }
-    return resolveLabel(op.label, op.name)
-  }
+  return (op: OpDef): string => resolveOpLabel(op, state)
 }
 
 // In production builds (NODE_ENV === 'production') we suppress the
@@ -107,7 +97,7 @@ export const FilterPanel = defineComponent({
     provide(filterInjectionKey, props.filter)
 
     const resolveRenderer = useRendererResolver()
-    const resolveOpLabel = useOpLabelResolver()
+    const opLabelOf = useOpLabelResolver()
 
     const schema = computed(() => props.filter.schema.value)
     const draft = computed(() => props.filter.draft.value)
@@ -168,7 +158,7 @@ export const FilterPanel = defineComponent({
         },
         [
           h('option', { value: '' }, '— op —'),
-          ...ops.map((o) => h('option', { value: o.name }, resolveOpLabel(o))),
+          ...ops.map((o) => h('option', { value: o.name }, opLabelOf(o))),
         ],
       )
     }

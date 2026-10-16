@@ -193,6 +193,124 @@ describe('useFilter — actions', () => {
   })
 })
 
+describe('useFilter — unwrapGroup / replaceNode / flattenDraft', () => {
+  const a = { field: 'title', op: 'eq', value: 'a' }
+  const b = { field: 'title', op: 'eq', value: 'b' }
+  const r = { field: 'rating', op: 'eq', value: 1 }
+
+  it('unwrapGroup splices a nested group\'s children into its parent', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addCondition([], r)
+    filter.actions.addGroup([], 'or')
+    filter.actions.addCondition([1], a)
+    filter.actions.addCondition([1], b)
+    filter.actions.addCondition([], r)
+
+    filter.actions.unwrapGroup([1])
+
+    expect(filter.draft.value).toEqual({ combinator: 'and', children: [r, a, b, r] })
+  })
+
+  it('unwrapGroup at root adopts a lone child group, and is a no-op otherwise', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addGroup([], 'or')
+    filter.actions.addCondition([0], a)
+    filter.actions.addCondition([0], b)
+
+    filter.actions.unwrapGroup([])
+    expect(filter.draft.value).toEqual({ combinator: 'or', children: [a, b] })
+
+    filter.actions.unwrapGroup([])
+    expect(filter.draft.value).toEqual({ combinator: 'or', children: [a, b] })
+  })
+
+  it('unwrapGroup ignores condition paths', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addCondition([], a)
+    filter.actions.unwrapGroup([0])
+    expect(filter.draft.value).toEqual({ combinator: 'and', children: [a] })
+  })
+
+  it('replaceNode swaps a subtree with a copy of the given node', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addCondition([], a)
+    filter.actions.addCondition([], b)
+    const node = { combinator: 'or' as const, children: [r] }
+
+    filter.actions.replaceNode([1], node)
+    expect(filter.draft.value).toEqual({ combinator: 'and', children: [a, node] })
+
+    node.children.push(a)
+    expect((filter.draft.value.children[1] as { children: unknown[] }).children).toHaveLength(1)
+  })
+
+  it('replaceNode at root only accepts a group', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addCondition([], a)
+    filter.actions.replaceNode([], r)
+    expect(filter.draft.value).toEqual({ combinator: 'and', children: [a] })
+    filter.actions.replaceNode([], { combinator: 'or', children: [b] })
+    expect(filter.draft.value).toEqual({ combinator: 'or', children: [b] })
+  })
+
+  it('replaceNode out of range is a no-op', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.replaceNode([3], r)
+    expect(filter.draft.value).toEqual({ combinator: 'and', children: [] })
+  })
+
+  it('flattenDraft collapses a group left with only a child group after a removal', () => {
+    const filter = useFilter({ schema, sync: 'none', flattenDraft: true })
+    filter.actions.addCondition([], r)
+    filter.actions.addGroup([], 'or')
+    filter.actions.addCondition([1], a)
+    filter.actions.addCondition([1], b)
+
+    filter.actions.removeNode([0])
+
+    expect(filter.draft.value).toEqual({ combinator: 'or', children: [a, b] })
+  })
+
+  it('flattenDraft collapses nested single-group chains in one action', () => {
+    const filter = useFilter({ schema, sync: 'none', flattenDraft: true })
+    filter.actions.replaceNode([], {
+      combinator: 'and',
+      children: [
+        r,
+        { combinator: 'or', children: [{ combinator: 'and', children: [{ combinator: 'or', children: [a, b] }] }] },
+      ],
+    })
+    expect(filter.draft.value).toEqual({
+      combinator: 'and',
+      children: [r, { combinator: 'or', children: [a, b] }],
+    })
+  })
+
+  it('flattenDraft keeps a group holding a single condition (fresh group)', () => {
+    const filter = useFilter({ schema, sync: 'none', flattenDraft: true })
+    filter.actions.addCondition([], r)
+    filter.actions.addGroup([], 'or')
+    filter.actions.addCondition([1])
+    expect(filter.draft.value.children[1]).toEqual({
+      combinator: 'or',
+      children: [{ field: null, op: null }],
+    })
+  })
+
+  it('without flattenDraft the redundant wrapper stays', () => {
+    const filter = useFilter({ schema, sync: 'none' })
+    filter.actions.addCondition([], r)
+    filter.actions.addGroup([], 'or')
+    filter.actions.addCondition([1], a)
+    filter.actions.addCondition([1], b)
+    filter.actions.removeNode([0])
+    expect(filter.draft.value).toEqual({
+      combinator: 'and',
+      children: [{ combinator: 'or', children: [a, b] }],
+    })
+  })
+})
+
 describe('useFilter — applyAst / toJSON', () => {
   it('applyAst loads a Valid AST as the new draft', () => {
     const filter = useFilter({ schema, sync: 'none' })
@@ -451,13 +569,17 @@ describe('useFilter — async id integration', () => {
       sync: 'none',
     })
 
+    // Opening query runs immediately (it tells the orchestrator the
+    // fetcher is async); typing after that is debounced.
+    filter.search.value.setQuery('authorId', '')
+    expect(search).toHaveBeenCalledTimes(1)
     filter.search.value.setQuery('authorId', 'a')
     filter.search.value.setQuery('authorId', 'ab')
     filter.search.value.setQuery('authorId', 'abc')
-    expect(search).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(250)
     expect(search).toHaveBeenCalledTimes(1)
-    expect(search.mock.calls[0]?.[0]).toBe('abc')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(search).toHaveBeenCalledTimes(2)
+    expect(search.mock.calls[1]?.[0]).toBe('abc')
     expect(filter.search.value.fieldKey).toBe('authorId')
     expect(filter.search.value.results).toHaveLength(1)
   })

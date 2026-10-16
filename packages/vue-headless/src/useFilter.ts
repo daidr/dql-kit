@@ -81,6 +81,30 @@ const getSessionStorage = (): Storage | null => {
 const isEmptyDraft = (d: DraftAST): boolean =>
   d.combinator === 'and' && d.children.length === 0
 
+/**
+ * Collapse redundant wrappers in place: any group whose only child is
+ * itself a group is replaced by that child (adopting its combinator).
+ * Applies to the root too. Groups with a single *condition* are left as
+ * they are — they're what a freshly-added group looks like.
+ */
+const flattenRedundantGroups = (group: DraftGroup): void => {
+  while (group.children.length === 1 && isGroup(group.children[0]!)) {
+    const inner = group.children[0] as DraftGroup
+    group.combinator = inner.combinator
+    group.children = inner.children
+  }
+  for (const child of group.children) {
+    if (isGroup(child)) flattenRedundantGroups(child as DraftGroup)
+  }
+}
+
+// What persistDraft writes: the draft plus the committed AST it was
+// edited on top of. On restore the draft is only trusted when that base
+// still matches the URL — otherwise the user arrived via a different
+// link / history entry and the old draft would contradict the active
+// filter.
+type PersistedDraft = { v: 1, base: ValidAST, draft: DraftAST }
+
 const isDraftLike = (v: unknown): v is DraftAST => {
   if (!v || typeof v !== 'object') return false
   const o = v as { combinator?: unknown, children?: unknown }
@@ -115,12 +139,13 @@ export const useFilter = <S extends FilterSchema>(
 
   const dropped: Ref<DroppedNode[]> = ref([])
 
-  // Merge rule when persistDraft: 'session' is enabled — saved draft wins
-  // entirely if it exists. A saved draft was written *after* the previous
-  // session reconciled URL → draft, so it already contains the URL-derived
-  // Valid AST plus any in-progress (incomplete) nodes. Reusing it preserves
-  // both. No saved draft → fall back to URL → initial.
-  const readPersistedDraft = (): DraftAST | null => {
+  // Restore rule when persistDraft: 'session' is enabled:
+  // - with a URL adapter, the URL (or `initial` when the URL is empty)
+  //   decides the committed filter; the saved draft is restored only if
+  //   it was edited on top of exactly that filter, else it's discarded;
+  // - without one, the saved session is the only source of truth, so
+  //   both its draft and its committed base are restored.
+  const readPersistedDraft = (): PersistedDraft | null => {
     if (persistMode !== 'session') return null
     const storage = getSessionStorage()
     if (!storage) return null
@@ -128,11 +153,32 @@ export const useFilter = <S extends FilterSchema>(
       const raw = storage.getItem(storageKey)
       if (raw === null) return null
       const parsed = JSON.parse(raw) as unknown
-      if (isDraftLike(parsed)) return parsed
+      if (
+        parsed && typeof parsed === 'object'
+        && (parsed as { v?: unknown }).v === 1
+        && isDraftLike((parsed as { draft?: unknown }).draft)
+        && isDraftLike((parsed as { base?: unknown }).base)
+      ) {
+        return parsed as PersistedDraft
+      }
+      // Legacy format: a bare draft with no recorded base. Treat it as
+      // having been committed as-is (auto mode).
+      if (isDraftLike(parsed)) {
+        const s = schemaRef.value
+        return { v: 1, base: s ? analyze(parsed, s).ast : emptyAst(), draft: parsed }
+      }
     } catch {
       // Corrupt JSON or storage access denied — silently fall through.
     }
     return null
+  }
+
+  const clearPersistedDraft = (): void => {
+    try {
+      getSessionStorage()?.removeItem(storageKey)
+    } catch {
+      /* storage disabled — nothing to clear */
+    }
   }
 
   const computeInitialState = (): { draft: DraftAST, committedAst: ValidAST } => {
@@ -149,10 +195,17 @@ export const useFilter = <S extends FilterSchema>(
 
     const persisted = readPersistedDraft()
     if (persisted) {
-      return {
-        draft: persisted,
-        committedAst: urlAst ?? (opts.initial ? cloneDraft(opts.initial) : emptyAst()),
+      if (!urlAdapter) {
+        return {
+          draft: persisted.draft,
+          committedAst: s ? analyze(cloneDraft(persisted.base) as DraftAST, s).ast : emptyAst(),
+        }
       }
+      const committedAst = urlAst ?? (opts.initial ? cloneDraft(opts.initial) : emptyAst())
+      if (s && astEqual(analyze(cloneDraft(persisted.base) as DraftAST, s).ast, committedAst)) {
+        return { draft: persisted.draft, committedAst }
+      }
+      clearPersistedDraft()
     }
 
     if (urlAst) {
@@ -247,9 +300,12 @@ export const useFilter = <S extends FilterSchema>(
     draft.value = cloneDraft(toRaw(committedValidRef.value)) as DraftAST
   }
 
+  const flattenDraft = opts.flattenDraft ?? false
+
   const mutate = (fn: (d: DraftAST) => void): void => {
     const next = cloneDraft(toRaw(draft.value))
     fn(next)
+    if (flattenDraft) flattenRedundantGroups(next)
     draft.value = next
   }
 
@@ -364,6 +420,39 @@ export const useFilter = <S extends FilterSchema>(
           combinator: outerCombinator,
           children: [empty, innerClone],
         }
+      })
+    },
+    unwrapGroup(path) {
+      mutate((d) => {
+        const target = path.length === 0 ? d : navigate(d, path)
+        if (!target || !isGroup(target)) return
+        const group = target as DraftGroup
+        if (path.length === 0) {
+          // The root has no parent to splice into; it can only absorb a
+          // lone child group.
+          const only = group.children.length === 1 ? group.children[0] : undefined
+          if (!only || !isGroup(only)) return
+          d.combinator = (only as DraftGroup).combinator
+          d.children = (only as DraftGroup).children
+          return
+        }
+        const located = navigateParent(d, path)
+        if (!located) return
+        located.parent.children.splice(located.index, 1, ...group.children)
+      })
+    },
+    replaceNode(path, node) {
+      mutate((d) => {
+        const replacement = cloneDraft(toRaw(node))
+        if (path.length === 0) {
+          if (!isGroup(replacement)) return
+          d.combinator = (replacement as DraftGroup).combinator
+          d.children = (replacement as DraftGroup).children
+          return
+        }
+        const located = navigateParent(d, path)
+        if (!located || located.index >= located.parent.children.length) return
+        located.parent.children[located.index] = replacement
       })
     },
     clear() {
@@ -489,14 +578,16 @@ export const useFilter = <S extends FilterSchema>(
     if (persistMode === 'session') {
       const storage = getSessionStorage()
       if (storage) {
-        // Mirror every draft mutation into sessionStorage. Empty AST removes
-        // the key so devtools shows a clean slate after `clear()`.
-        watch(draft, (next) => {
+        // Mirror every draft / commit change into sessionStorage. Nothing
+        // to restore (empty draft on an empty base) removes the key so
+        // devtools shows a clean slate after `clear()`.
+        watch([draft, committedValidRef], ([next, base]) => {
           try {
-            if (isEmptyDraft(next)) {
+            if (isEmptyDraft(next) && base.children.length === 0) {
               storage.removeItem(storageKey)
             } else {
-              storage.setItem(storageKey, JSON.stringify(next))
+              const payload: PersistedDraft = { v: 1, base, draft: next }
+              storage.setItem(storageKey, JSON.stringify(payload))
             }
           } catch {
             /* quota / disabled — silent */

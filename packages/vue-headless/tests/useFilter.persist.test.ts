@@ -113,8 +113,9 @@ describe('useFilter — persistDraft: \'session\' write-through', () => {
     const raw = sessionStorage.getItem(`${STORAGE_PREFIX}filter`)
     expect(raw).not.toBeNull()
     expect(JSON.parse(raw!)).toEqual({
-      combinator: 'and',
-      children: [{ field: 'title', op: 'eq', value: 'a' }],
+      v: 1,
+      base: { combinator: 'and', children: [{ field: 'title', op: 'eq', value: 'a' }] },
+      draft: { combinator: 'and', children: [{ field: 'title', op: 'eq', value: 'a' }] },
     })
     wrapper.unmount()
   })
@@ -131,7 +132,7 @@ describe('useFilter — persistDraft: \'session\' write-through', () => {
     expect(filter.valid.value.children).toHaveLength(0)
     // But the saved DRAFT keeps it.
     const raw = sessionStorage.getItem(`${STORAGE_PREFIX}filter`)
-    const parsed = JSON.parse(raw!) as DraftAST
+    const parsed = (JSON.parse(raw!) as { draft: DraftAST }).draft
     expect(parsed.children).toHaveLength(1)
     expect(parsed.children[0]).toMatchObject({ field: null, op: null })
     wrapper.unmount()
@@ -194,20 +195,70 @@ describe('useFilter — persistDraft: \'session\' restore-on-mount', () => {
     wrapper.unmount()
   })
 
-  it('saved draft wins over URL on mount (documented merge rule)', async () => {
-    // The previous session ended with a saved draft. On reload, even if a
-    // URL is present, the saved draft is loaded — it includes both finished
-    // nodes (which would also be in the URL) and any in-progress ones.
-    const saved: DraftAST = {
+  it('restores a saved draft whose base matches the URL (keeps in-progress nodes)', async () => {
+    const urlAst: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'from-url' }],
+    }
+    const draft: DraftAST = {
       combinator: 'and',
       children: [
-        { field: 'title', op: 'eq', value: 'kept-from-draft' },
+        { field: 'title', op: 'eq', value: 'from-url' },
         { field: 'rating', op: null }, // in-progress; not in URL valid
       ],
     }
-    sessionStorage.setItem(`${STORAGE_PREFIX}filter`, JSON.stringify(saved))
+    sessionStorage.setItem(
+      `${STORAGE_PREFIX}filter`,
+      JSON.stringify({ v: 1, base: urlAst, draft }),
+    )
 
-    // URL encodes a different valid AST (simulating an external bookmark).
+    const { filter, wrapper } = await buildHarness({
+      sync: 'memory',
+      initialUrl: toUrl(urlAst),
+      persistDraft: 'session',
+    })
+
+    expect(filter.draft.value).toEqual(draft)
+    expect(filter.committedValid.value).toEqual(urlAst)
+    wrapper.unmount()
+  })
+
+  it('restores uncommitted edits made on top of the URL filter (manual mode)', async () => {
+    const urlAst: ValidAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'committed' }],
+    }
+    const draft: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'edited-not-applied' }],
+    }
+    sessionStorage.setItem(
+      `${STORAGE_PREFIX}filter`,
+      JSON.stringify({ v: 1, base: urlAst, draft }),
+    )
+    const adapter = createMemoryUrlAdapter(toUrl(urlAst))
+    let filter!: Filter
+    const wrapper = mount(defineComponent({
+      setup() {
+        filter = useFilter({ schema, sync: adapter, commitMode: 'manual', persistDraft: 'session' }) as Filter
+        return () => h('div')
+      },
+    }))
+    expect(filter.draft.value).toEqual(draft)
+    expect(filter.committedValid.value).toEqual(urlAst)
+    expect(filter.isDirty.value).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('discards a saved draft built on a different filter than the URL (shared link / back nav)', async () => {
+    const saved: DraftAST = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'old-draft' }],
+    }
+    sessionStorage.setItem(
+      `${STORAGE_PREFIX}filter`,
+      JSON.stringify({ v: 1, base: saved, draft: saved }),
+    )
     const urlAst: ValidAST = {
       combinator: 'and',
       children: [{ field: 'title', op: 'eq', value: 'from-url' }],
@@ -219,12 +270,24 @@ describe('useFilter — persistDraft: \'session\' restore-on-mount', () => {
       persistDraft: 'session',
     })
 
-    expect(filter.draft.value).toEqual(saved)
-    // Valid reflects the saved draft (with incomplete dropped), NOT the URL.
-    expect(filter.valid.value).toEqual({
+    expect(filter.draft.value).toEqual(urlAst)
+    expect(filter.valid.value).toEqual(urlAst)
+    expect(sessionStorage.getItem(`${STORAGE_PREFIX}filter`)).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('discards a saved non-empty draft when the URL carries no filter', async () => {
+    const saved: DraftAST = {
       combinator: 'and',
-      children: [{ field: 'title', op: 'eq', value: 'kept-from-draft' }],
+      children: [{ field: 'title', op: 'eq', value: 'old-draft' }],
+    }
+    sessionStorage.setItem(`${STORAGE_PREFIX}filter`, JSON.stringify(saved))
+    const { filter, wrapper } = await buildHarness({
+      sync: 'memory',
+      initialUrl: '',
+      persistDraft: 'session',
     })
+    expect(filter.valid.value).toEqual({ combinator: 'and', children: [] })
     wrapper.unmount()
   })
 
