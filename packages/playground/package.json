@@ -14,13 +14,13 @@
     "@dql-kit/drizzle-pg": "workspace:*",
     "@dql-kit/vue-headless": "workspace:*",
     "@dql-kit/vue-ui": "workspace:*",
-    "drizzle-orm": "^0.45.0",
-    "vue": "^3.5.0"
+    "drizzle-orm": "^0.45.4",
+    "vue": "^3.5.44"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.1.0",
-    "typescript": "^5.5.0",
-    "vite": "^5.4.0",
-    "vue-tsc": "^2.1.0"
+    "@vitejs/plugin-vue": "^6.0.10",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.4",
+    "vue-tsc": "^3.3.13"
   }
 }
