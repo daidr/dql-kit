@@ -32,7 +32,7 @@ Three pillars:
    ├── url/                toUrl, fromUrl, version sniffer
    └── ops/                op metadata registry (no implementations)
 
-@dql-kit/drizzle           ──► peerDeps: @dql-kit/core, drizzle-orm   (PostgreSQL only)
+@dql-kit/drizzle-pg        ──► peerDeps: @dql-kit/core, drizzle-orm   (PostgreSQL only)
    ├── translator          CheckedAST → SQL WHERE fragment (immutable, ops-as-option)
    └── ops                 op name → drizzle SQL builder (delegateTo-aware)
 
@@ -191,7 +191,9 @@ ship as separate packages following the same pattern.
 PG-specific SQL: `ILIKE`, `= ANY(col)` / `<> ALL(col)` and `@>` for arrays,
 `cardinality(col)`, and `NOW() - INTERVAL '...'` for `inLast`. Running it
 against MySQL or SQLite through Drizzle will produce invalid SQL. A
-dialect-neutral adapter would be a separate package (or a per-dialect op map).
+dialect-neutral adapter would be a separate package (or a per-dialect op map). The package was
+renamed from `@dql-kit/drizzle` to `@dql-kit/drizzle-pg` so the name says so;
+adapters for other dialects would follow the same `drizzle-<dialect>` pattern.
 
 **`date` values are UTC days.** The adapter turns a `date` value
 `'2024-01-01'` into `new Date('2024-01-01')`, which is midnight UTC. Against a

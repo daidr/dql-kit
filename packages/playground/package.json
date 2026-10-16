@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@dql-kit/core": "workspace:*",
-    "@dql-kit/drizzle": "workspace:*",
+    "@dql-kit/drizzle-pg": "workspace:*",
     "@dql-kit/vue-headless": "workspace:*",
     "@dql-kit/vue-ui": "workspace:*",
     "drizzle-orm": "^0.45.0",

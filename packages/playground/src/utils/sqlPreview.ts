@@ -1,5 +1,5 @@
 import { parseAst, type FieldDef, type FilterSchema, type ValidAST } from '@dql-kit/core'
-import { createDrizzleTranslator } from '@dql-kit/drizzle'
+import { createDrizzleTranslator } from '@dql-kit/drizzle-pg'
 import {
   PgDialect,
   boolean,

@@ -121,10 +121,10 @@ export const drizzleOps: Record<string, OpTranslator> = {
     const { amount, unit } = (v ?? {}) as { amount: unknown, unit: unknown }
     const a = Number(amount)
     if (!Number.isFinite(a) || a <= 0) {
-      throw new Error(`[dql-kit/drizzle] inLast: amount must be a positive finite number, got ${String(amount)}`)
+      throw new Error(`[dql-kit/drizzle-pg] inLast: amount must be a positive finite number, got ${String(amount)}`)
     }
     if (!isRelativeUnit(unit)) {
-      throw new Error(`[dql-kit/drizzle] inLast: unit must be one of minute/hour/day/week/month, got ${String(unit)}`)
+      throw new Error(`[dql-kit/drizzle-pg] inLast: unit must be one of minute/hour/day/week/month, got ${String(unit)}`)
     }
     return sql`${col} >= NOW() - ${sql.raw(`INTERVAL '${a} ${unit}'`)}`
   },

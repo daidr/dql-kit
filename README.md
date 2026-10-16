@@ -13,7 +13,7 @@ Type-safe, schema-driven filter / query AST library for dashboards.
 | Package | Description |
 |---|---|
 | [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, `parseAst` for untrusted input, URL serialization. Zero ORM / framework / i18n deps. |
-| [`@dql-kit/drizzle`](./packages/drizzle) | Drizzle ORM translator, **PostgreSQL only**. Parsed AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
+| [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM translator, **PostgreSQL only**. Parsed AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` composable + `createDqlKit` Vue plugin. Pluggable URL sync via `UrlAdapter` (`vue-router` not imported here). |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` — `UrlAdapter` for vue-router apps. |
 | [`@dql-kit/vue-ui`](./packages/vue-ui) | Reference `<FilterPanel>` / `<FilterButton>` + built-in input renderers. Optional — apps usually wrap `useFilter` in their own components. |
@@ -116,7 +116,7 @@ instead of a SQL error.
 
 ```ts
 import { parseAst } from '@dql-kit/core'
-import { createDrizzleTranslator, drizzleOps } from '@dql-kit/drizzle'
+import { createDrizzleTranslator, drizzleOps } from '@dql-kit/drizzle-pg'
 import { articleFilterSchema } from '@/schema'
 import { table } from './db'
 

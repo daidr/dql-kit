@@ -13,7 +13,7 @@
 | Package | 描述 |
 |---|---|
 | [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、解析不可信输入的 `parseAst`、URL 序列化。零 ORM / 框架 / i18n 依赖。 |
-| [`@dql-kit/drizzle`](./packages/drizzle) | Drizzle ORM 翻译器，**仅支持 PostgreSQL**。解析后的 AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
+| [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM 翻译器，**仅支持 PostgreSQL**。解析后的 AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` 组合式函数 + `createDqlKit` Vue 插件。通过 `UrlAdapter` 实现可插拔的 URL 同步（此处不引入 `vue-router`）。 |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` —— 面向 vue-router 应用的 `UrlAdapter`。 |
 | [`@dql-kit/vue-ui`](./packages/vue-ui) | 参考实现 `<FilterPanel>` / `<FilterButton>` + 内置输入渲染器。可选 —— 应用通常会基于 `useFilter` 自行封装组件。 |
@@ -115,7 +115,7 @@ const filter = useFilter({
 
 ```ts
 import { parseAst } from '@dql-kit/core'
-import { createDrizzleTranslator, drizzleOps } from '@dql-kit/drizzle'
+import { createDrizzleTranslator, drizzleOps } from '@dql-kit/drizzle-pg'
 import { articleFilterSchema } from '@/schema'
 import { table } from './db'
 
