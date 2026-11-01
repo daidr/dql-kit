@@ -267,6 +267,11 @@ ops: {
 映射为 `null` 的字段，它的每个 op 都必须有自定义 handler（创建 translator 时检查），
 这些 handler 收到的 `col` 为 `undefined`。`delegateTo: 'string'` 让该字段在 UI 中使用文本输入框。
 
+关联行的计数、求和也是同样的写法：handler 返回一个关联标量子查询，例如
+``sql`(SELECT count(*) FROM ${comments} WHERE ${comments.articleId} = ${articles.id}) >= ${v}` ``，
+字段使用 `delegateTo: 'number'`。对分组结果的筛选（`HAVING`）暂不支持，见
+[ADR 0001](./docs/adr/0001-aggregate-filters.md)。
+
 **否定类 op 保留 NULL 行。** `neq`、`notIn`、`notContains` 会匹配列为 NULL 的
 行（“状态不是草稿”包含没有状态的行），与 `notEmpty` 把 NULL 视为空的做法一致。
 每个 op 的完整语义见 [DESIGN.md](./DESIGN.md) 的 “Op semantics”。
