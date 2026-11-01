@@ -14,14 +14,18 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["src", "dist"],
+  "files": [
+    "src",
+    "dist"
+  ],
   "scripts": {
     "build": "bun build ./src/index.ts --outdir ./dist --target node --format esm --external drizzle-orm --external @dql-kit/core && tsc -p tsconfig.build.json",
     "type-check": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@dql-kit/core": "workspace:*"
+    "@dql-kit/core": "workspace:*",
+    "@dql-kit/drizzle-common": "workspace:*"
   },
   "peerDependencies": {
     "drizzle-orm": ">=0.30.0"

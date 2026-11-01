@@ -35,6 +35,9 @@ export type OpContext = {
  */
 export type OpTranslator = (col: AnyColumn | undefined, value: unknown, ctx: OpContext) => SQL
 
+/** A built-in op handler: always called with a column. */
+export type ColumnOp = (col: AnyColumn, value: unknown, ctx: OpContext) => SQL
+
 /**
  * Map of op name → custom SQL translator. Keys passed here override or
  * extend the built-in `drizzleOps`. This is the construction-time

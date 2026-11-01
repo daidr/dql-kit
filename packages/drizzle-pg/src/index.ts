@@ -1,6 +1,10 @@
-export { createDrizzleTranslator } from './translator.ts'
-export { drizzleOps } from './ops.ts'
-export { existsOp, notExistsOp, type SubqueryBuilder } from './exists.ts'
+import { createTranslatorFactory } from '@dql-kit/drizzle-common'
+import { drizzleOps } from './ops.ts'
+
+/** Build a PostgreSQL translator for a schema. See the README. */
+export const createDrizzleTranslator = createTranslatorFactory('drizzle-pg', drizzleOps)
+export { drizzleOps }
+export { existsOp, notExistsOp, type SubqueryBuilder } from '@dql-kit/drizzle-common'
 export type {
   AnyDrizzleTable,
   CalendarTranslatorOptions,
@@ -10,4 +14,4 @@ export type {
   OpMap,
   OpTranslator,
   Translator,
-} from './types.ts'
+} from '@dql-kit/drizzle-common'
