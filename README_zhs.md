@@ -155,7 +155,7 @@ const translator = createDrizzleTranslator({
     authorId: table.articles.authorId,
     publishedAt: table.articles.publishedAt,
     tags: table.articles.tags,
-    keyword: table.articles.title,  // 占位列，会被下方的 ops 覆盖
+    keyword: null,  // 没有对应的列，由下方的 `contains` op 处理
   },
   // 自定义 op handler 在构造时传入 —— 不存在会变更状态的 `registerOp`。
   ops: {
@@ -231,6 +231,30 @@ const translator = createDrizzleTranslator({
 计算后以参数传入，所以夏令时切换当天按真实长度（23 或 25 小时）计算，也不受
 数据库会话时区影响。`now()` 可以固定计算边界用的时钟。`createMatcher` 请传入相同的
 `timeZone` 和 `weekStartsOn`。
+
+**关联行条件。** `existsOp(build)` 把子查询包成 `EXISTS (…)`，`notExistsOp` 包成
+`NOT EXISTS (…)`，用于“有评论包含 X”这类筛选。给字段定义一个自定义 op，并把它映射为 `null`：
+
+```ts
+import { existsOp } from '@dql-kit/drizzle-pg'
+
+// schema
+const anyCommentContains = defineOp('anyCommentContains', 'single', '任一评论包含')
+comments: f.custom({ typeId: 'relation', delegateTo: 'string', ops: [anyCommentContains] }),
+
+// translator
+columns: { /* … */ comments: null },
+ops: {
+  anyCommentContains: existsOp((v) =>
+    db.select({ one: sql`1` }).from(table.comments).where(and(
+      eq(table.comments.articleId, table.articles.id),
+      ilike(table.comments.body, `%${String(v)}%`),
+    ))),
+},
+```
+
+映射为 `null` 的字段，它的每个 op 都必须有自定义 handler（创建 translator 时检查），
+这些 handler 收到的 `col` 为 `undefined`。`delegateTo: 'string'` 让该字段在 UI 中使用文本输入框。
 
 **否定类 op 保留 NULL 行。** `neq`、`notIn`、`notContains` 会匹配列为 NULL 的
 行（“状态不是草稿”包含没有状态的行），与 `notEmpty` 把 NULL 视为空的做法一致。

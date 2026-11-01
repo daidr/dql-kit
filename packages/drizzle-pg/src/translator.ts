@@ -22,12 +22,26 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
   const weekStartsOn = resolveWeekStart(opts.weekStartsOn)
   const clock = opts.now ?? (() => new Date())
 
-  const columns: Record<string, AnyColumn> = {}
-  const explicit = (opts.columns ?? {}) as Record<string, AnyColumn | undefined>
+  const columns: Record<string, AnyColumn | undefined> = {}
+  const explicit = (opts.columns ?? {}) as Record<string, AnyColumn | null | undefined>
   const table = ('table' in opts ? opts.table : undefined) as AnyDrizzleTable | undefined
+  const customOps = (opts.ops ?? {}) as Record<string, OpTranslator | undefined>
+  const hasOwn = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
 
-  for (const fieldKey of Object.keys(opts.schema.fields)) {
+  for (const [fieldKey, def] of Object.entries(opts.schema.fields)) {
     const fromExplicit = explicit[fieldKey]
+    if (fromExplicit === null) {
+      // No column: only custom handlers can translate this field.
+      const missing = def.ops.map((o) => o.name).filter((n) => !hasOwn(customOps, n) || !customOps[n])
+      if (missing.length > 0) {
+        throw new Error(
+          `[dql-kit/drizzle-pg] Field "${fieldKey}" is mapped to null, so each of its ops needs a handler in "ops". `
+            + `Missing: ${missing.join(', ')}.`,
+        )
+      }
+      columns[fieldKey] = undefined
+      continue
+    }
     const fromTable = table?.[fieldKey]
     const col = fromExplicit ?? fromTable
     if (!col) {
@@ -53,8 +67,7 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
       if (!joined) return sql`true`
       return joined
     }
-    const col = columns[node.field]
-    if (!col) {
+    if (!hasOwn(columns, node.field)) {
       throw new Error(
         `[dql-kit/drizzle-pg] AST references unknown field "${node.field}" not present in schema.`,
       )
@@ -81,7 +94,7 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
         `[dql-kit/drizzle-pg] AST references field "${node.field}" not declared in schema.`,
       )
     }
-    return opFn(col, node.value, { field: fieldDef, timeZone, weekStartsOn, now })
+    return opFn(columns[node.field], node.value, { field: fieldDef, timeZone, weekStartsOn, now })
   }
 
   return {
