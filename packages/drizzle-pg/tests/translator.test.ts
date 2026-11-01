@@ -292,17 +292,16 @@ describe('createDrizzleTranslator — full string op coverage', () => {
     expect(titlesOf(rows)).toEqual(['Hello World', 'hello'])
   })
 
-  test('notContains excludes matching rows but includes NULL behaviour as PG defines it', async () => {
+  test('notContains excludes matching rows and keeps NULL rows', async () => {
     const t = createDrizzleTranslator({ schema: stringSchema, table: stringOpsTable })
     const ast: ValidAST = {
       combinator: 'and',
       children: [{ field: 'title', op: 'notContains', value: 'foo' }],
     }
     const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
-    // Postgres: NOT ILIKE on NULL evaluates to NULL, so NULL rows are excluded.
-    // 'foo%bar' / 'foo_bar' / 'foo\bar' are all foo-prefixed → excluded.
-    // '', 'hello', 'Hello World', 'world' remain.
-    expect(titlesOf(rows)).toEqual(['', 'Hello World', 'hello', 'world'])
+    // A NULL title doesn't contain 'foo', so it matches (plain NOT ILIKE
+    // would drop it). 'foo%bar' / 'foo_bar' / 'foo\bar' are excluded.
+    expect(titlesOf(rows)).toEqual([null, '', 'Hello World', 'hello', 'world'])
   })
 
   test('startsWith uses prefix LIKE pattern', async () => {
@@ -365,9 +364,9 @@ describe('createDrizzleTranslator — full string op coverage', () => {
       children: [{ field: 'title', op: 'notIn', value: ['hello', 'world', 'Hello World'] }],
     }
     const rows = await db.select().from(stringOpsTable).where(t.toWhere(checked(ast)))
-    // NULL rows are excluded by NOT IN per PG semantics; '', and the three
-    // foo-prefixed rows survive.
-    expect(titlesOf(rows)).toEqual(['', 'foo%bar', 'foo\\bar', 'foo_bar'])
+    // NULL is not one of the listed values, so it matches (plain NOT IN
+    // would drop it); '' and the three foo-prefixed rows survive too.
+    expect(titlesOf(rows)).toEqual([null, '', 'foo%bar', 'foo\\bar', 'foo_bar'])
   })
 
   // LIKE-pattern injection coverage: a literal '%' / '_' / '\' in the search
@@ -1450,5 +1449,127 @@ describe('createDrizzleTranslator — custom op via registerOp', () => {
       ],
     }
     expect(() => t.toWhere(checked(ast))).toThrow(/No SQL translator registered for op "moneyEq"/)
+  })
+})
+
+// Negated ops keep rows whose column is NULL: "status is not draft" should
+// match rows with no status at all, the way `notEmpty` treats NULL as empty.
+const nullableTable = pgTable('nullable_rows', {
+  id: serial('id').primaryKey(),
+  status: text('status'),
+  rating: integer('rating'),
+  tags: text('tags').array(),
+})
+const nullableSchema = defineFilterSchema({
+  fields: {
+    status: f.enum(['draft', 'published'] as const),
+    rating: f.number().withOps([builtinOps.notIn]),
+    tags: f.array(f.string()),
+  },
+})
+
+describe('createDrizzleTranslator — negated ops keep NULL rows', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE nullable_rows (
+        id SERIAL PRIMARY KEY,
+        status TEXT,
+        rating INTEGER,
+        tags TEXT[]
+      );
+      INSERT INTO nullable_rows (status, rating, tags) VALUES
+        ('draft',     1,    ARRAY['a']),
+        ('published', 2,    ARRAY['b']),
+        (NULL,        NULL, NULL);
+    `)
+  })
+
+  const idsOf = (rows: Array<{ id: number }>) => rows.map((r) => r.id).sort()
+  const run = async (cond: { field: string, op: string, value?: unknown }) => {
+    const t = createDrizzleTranslator({ schema: nullableSchema, table: nullableTable })
+    const parsed = parseAst({ combinator: 'and', children: [cond] }, nullableSchema)
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors))
+    return idsOf(await db.select().from(nullableTable).where(t.toWhere(parsed.ast)))
+  }
+
+  test.each([
+    ['enum neq',            { field: 'status', op: 'neq', value: 'draft' },       [2, 3]],
+    ['enum notIn',          { field: 'status', op: 'notIn', value: ['draft'] },   [2, 3]],
+    ['number neq',          { field: 'rating', op: 'neq', value: 1 },             [2, 3]],
+    ['number notIn',        { field: 'rating', op: 'notIn', value: [1] },         [2, 3]],
+    ['array notContains',   { field: 'tags', op: 'notContains', value: 'a' },     [2, 3]],
+  ])('%s', async (_label, cond, expected) => {
+    expect(await run(cond)).toEqual(expected)
+  })
+
+  test('positive ops still skip NULL rows', async () => {
+    expect(await run({ field: 'status', op: 'eq', value: 'draft' })).toEqual([1])
+    expect(await run({ field: 'status', op: 'in', value: ['draft', 'published'] })).toEqual([1, 2])
+    expect(await run({ field: 'tags', op: 'contains', value: 'a' })).toEqual([1])
+  })
+})
+
+// `date` fields compare as whole days, so the result is the same on a PG
+// `date` column and on a `timestamp` column holding times within the day.
+const dayRows = pgTable('day_rows', {
+  id: serial('id').primaryKey(),
+  day: date('day', { mode: 'string' }).notNull(),
+  at: timestamp('at', { withTimezone: true }).notNull(),
+})
+const dayOnDateSchema = defineFilterSchema({
+  fields: { day: f.date().withOps([builtinOps.neq]) },
+})
+const dayOnTimestampSchema = defineFilterSchema({
+  fields: { at: f.date().withOps([builtinOps.neq]) },
+})
+
+describe('createDrizzleTranslator — date fields use half-open day ranges', () => {
+  let db: ReturnType<typeof drizzle>
+  let client: PGlite
+
+  beforeAll(async () => {
+    client = new PGlite()
+    db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE day_rows (
+        id SERIAL PRIMARY KEY,
+        day DATE NOT NULL,
+        at TIMESTAMPTZ NOT NULL
+      );
+      INSERT INTO day_rows (day, at) VALUES
+        ('2024-01-30', '2024-01-30T23:59:59Z'),
+        ('2024-01-31', '2024-01-31T00:00:00Z'),
+        ('2024-01-31', '2024-01-31T18:30:00Z'),
+        ('2024-02-01', '2024-02-01T00:00:00Z');
+    `)
+  })
+
+  const cases: Array<[string, string, unknown, number[]]> = [
+    ['eq keeps the whole day',            'eq',      '2024-01-31',                 [2, 3]],
+    ['neq drops the whole day',           'neq',     '2024-01-31',                 [1, 4]],
+    ['before is exclusive of the day',    'before',  '2024-01-31',                 [1]],
+    ['after is exclusive of the day',     'after',   '2024-01-31',                 [4]],
+    ['between keeps all of the last day', 'between', ['2024-01-30', '2024-01-31'], [1, 2, 3]],
+  ]
+
+  test.each(cases)('%s (date column)', async (_label, op, value, expected) => {
+    const t = createDrizzleTranslator({ schema: dayOnDateSchema, table: dayRows })
+    const parsed = parseAst({ combinator: 'and', children: [{ field: 'day', op, value }] }, dayOnDateSchema)
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors))
+    const rows = await db.select().from(dayRows).where(t.toWhere(parsed.ast))
+    expect(rows.map((r) => r.id).sort()).toEqual(expected)
+  })
+
+  test.each(cases)('%s (timestamp column)', async (_label, op, value, expected) => {
+    const t = createDrizzleTranslator({ schema: dayOnTimestampSchema, table: dayRows })
+    const parsed = parseAst({ combinator: 'and', children: [{ field: 'at', op, value }] }, dayOnTimestampSchema)
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors))
+    const rows = await db.select().from(dayRows).where(t.toWhere(parsed.ast))
+    expect(rows.map((r) => r.id).sort()).toEqual(expected)
   })
 })

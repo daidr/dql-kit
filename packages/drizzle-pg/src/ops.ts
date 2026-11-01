@@ -57,6 +57,22 @@ const coerceDateValue = (field: FieldDef, v: unknown): unknown => {
   return coerceDateScalar(v)
 }
 
+// `date` values are calendar days. Compare them as half-open day ranges
+// (`>= day AND < day + 1`) rather than as instants: on a PG `date` column
+// the result is the same, and on a `timestamp` column the whole last day
+// is kept instead of only its midnight. Only plain `date` fields (or
+// customs delegating to it) take this path; arrays and datetime don't.
+const DAY_MS = 86_400_000
+const isDayField = (field: FieldDef): boolean => effectiveTypeId(field) === 'date'
+const dayStart = (v: unknown): Date => coerceDateScalar(v) as Date
+const nextDay = (v: unknown): Date => new Date(dayStart(v).getTime() + DAY_MS)
+
+// Negated ops keep NULL rows. Under SQL's three-valued logic `col <> v`
+// is NULL (so the row is dropped) when `col` is NULL, but users picking
+// "status is not draft" expect rows with no status at all to match.
+// This mirrors `notEmpty`, which already treats NULL as empty.
+const orNull = (col: AnyColumn, cond: SQL): SQL => orSql(isNull(col), cond)!
+
 // Some ops share an op name across very different SQL semantics — `contains`
 // is ILIKE for string fields but `= ANY(col)` for PG array fields, and
 // `isEmpty` is `IS NULL OR = ''` for strings vs `cardinality(col) = 0` for
@@ -65,8 +81,18 @@ const coerceDateValue = (field: FieldDef, v: unknown): unknown => {
 // The op translator branches on the effective typeId via the OpContext.
 
 export const drizzleOps: Record<string, OpTranslator> = {
-  eq:           (col, v, ctx) => eq(col, coerceDateValue(ctx.field, v) as never),
-  neq:          (col, v, ctx) => ne(col, coerceDateValue(ctx.field, v) as never),
+  eq:           (col, v, ctx) => {
+    if (isDayField(ctx.field)) {
+      return andSql(gte(col, dayStart(v) as never), lt(col, nextDay(v) as never))!
+    }
+    return eq(col, coerceDateValue(ctx.field, v) as never)
+  },
+  neq:          (col, v, ctx) => {
+    if (isDayField(ctx.field)) {
+      return orNull(col, orSql(lt(col, dayStart(v) as never), gte(col, nextDay(v) as never))!)
+    }
+    return orNull(col, ne(col, coerceDateValue(ctx.field, v) as never))
+  },
   contains:     (col, v, ctx) => {
     if (effectiveTypeId(ctx.field) === 'array') {
       // PG: scalar = ANY(array_column)
@@ -76,11 +102,12 @@ export const drizzleOps: Record<string, OpTranslator> = {
   },
   notContains:  (col, v, ctx) => {
     if (effectiveTypeId(ctx.field) === 'array') {
-      // PG: scalar <> ALL(array_column). NULL elements yield NULL → row
-      // dropped by WHERE, which matches "value not present" intent.
-      return sql`${v} <> ALL(${col})`
+      // PG: scalar <> ALL(array_column). A NULL column has no elements,
+      // so it can't contain the value: keep the row. (NULL *elements*
+      // still make `<> ALL` NULL; arrays with NULL items are not modelled.)
+      return orNull(col, sql`${v} <> ALL(${col})`)
     }
-    return sql`${col} NOT ILIKE ${`%${escapeLike(String(v))}%`}`
+    return orNull(col, sql`${col} NOT ILIKE ${`%${escapeLike(String(v))}%`}`)
   },
   startsWith:   (col, v) => ilike(col, `${escapeLike(String(v))}%`),
   endsWith:     (col, v) => ilike(col, `%${escapeLike(String(v))}`),
@@ -102,17 +129,24 @@ export const drizzleOps: Record<string, OpTranslator> = {
     return andSql(isNotNull(col), ne(col as AnyColumn, '' as never))!
   },
   in:           (col, v, ctx) => inArray(col, coerceDateValue(ctx.field, v) as never[]),
-  notIn:        (col, v, ctx) => notInArray(col, coerceDateValue(ctx.field, v) as never[]),
+  notIn:        (col, v, ctx) => orNull(col, notInArray(col, coerceDateValue(ctx.field, v) as never[])),
   gt:           (col, v, ctx) => gt(col, coerceDateValue(ctx.field, v) as never),
   gte:          (col, v, ctx) => gte(col, coerceDateValue(ctx.field, v) as never),
   lt:           (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
   lte:          (col, v, ctx) => lte(col, coerceDateValue(ctx.field, v) as never),
   between:      (col, v, ctx) => {
+    if (isDayField(ctx.field)) {
+      const [a, b] = v as [unknown, unknown]
+      return andSql(gte(col, dayStart(a) as never), lt(col, nextDay(b) as never))!
+    }
     const [a, b] = coerceDateValue(ctx.field, v) as [unknown, unknown]
     return between(col, a as never, b as never)
   },
   before:       (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
-  after:        (col, v, ctx) => gt(col, coerceDateValue(ctx.field, v) as never),
+  after:        (col, v, ctx) => {
+    if (isDayField(ctx.field)) return gte(col, nextDay(v) as never)
+    return gt(col, coerceDateValue(ctx.field, v) as never)
+  },
   inLast:       (col, v) => {
     // Defence-in-depth: core/check.ts already rejects anything outside the
     // documented unit set, but `unit` is interpolated into sql.raw so we

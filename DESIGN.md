@@ -195,12 +195,45 @@ dialect-neutral adapter would be a separate package (or a per-dialect op map). T
 renamed from `@dql-kit/drizzle` to `@dql-kit/drizzle-pg` so the name says so;
 adapters for other dialects would follow the same `drizzle-<dialect>` pattern.
 
-**`date` values are UTC days.** The adapter turns a `date` value
-`'2024-01-01'` into `new Date('2024-01-01')`, which is midnight UTC. Against a
-PG `date` column that is exact; against a `timestamp` / `timestamptz` column,
-`eq` / `before` / `after` / `between` cut days at UTC midnight, not the
-viewer's local midnight. Map `date` fields to `date` columns, or use
-`datetime` with explicit instants when the local day matters.
+**`date` values are UTC days.** ~~Against a `timestamp` column, `eq` /
+`before` / `after` / `between` cut days at UTC midnight.~~ **Superseded**: the
+adapter compares a `date` value as the half-open range
+`[day 00:00Z, next day 00:00Z)`: `eq d` → `col >= d AND col < d+1`,
+`between [a, b]` → `col >= a AND col < b+1`, `after d` → `col >= d+1`,
+`before d` → `col < d`, `neq d` → outside `[d, d+1)` or NULL. On a PG `date`
+column this is the same as before; on a `timestamp` / `timestamptz` column
+the whole last day is now kept. Days still start at UTC midnight, not the
+viewer's; use `datetime` with explicit instants when the local day matters.
+
+### Op semantics
+
+What every built-in op means, independent of dialect. Adapters (and any
+future in-memory evaluator) must agree with this table; tests assert it.
+"Empty" means NULL for scalar columns; for strings also `''`; for arrays
+also zero length.
+
+| Op | Shapes | NULL column | Notes |
+|---|---|---|---|
+| `eq` / `in` | single / list | no match | `in` needs ≥ 1 value (empty list is `incomplete`). Strings compare exactly. `date` → whole day. |
+| `neq` / `notIn` | single / list | **match** | Negation of `eq` / `in` that keeps NULL rows. `notIn` needs ≥ 1 value. |
+| `contains` (string) | single | no match | Case-insensitive substring; `%`, `_`, `\` are literal. |
+| `notContains` (string) | single | **match** | Negation of `contains`; `''` matches. |
+| `startsWith` / `endsWith` | single | no match | Case-insensitive; wildcards literal. |
+| `isEmpty` | none | match | String: NULL or `''`. Array: NULL or zero length. |
+| `notEmpty` | none | no match | Exact negation of `isEmpty`. |
+| `gt` / `gte` / `lt` / `lte` | single | no match | |
+| `between` | pair | no match | Inclusive both ends; lower ≤ upper or `invalid_range`. `date` → `[a, b+1)`. |
+| `before` / `after` | single | no match | Exclusive. `date`: `before d` = earlier days, `after d` = later days. |
+| `inLast` | relative | no match | `col >= NOW() - amount unit` (database clock). |
+| `contains` (array) | single | no match | Value is an element. |
+| `notContains` (array) | single | **match** | Value is not an element; a NULL array has no elements. |
+| `containsAll` | list | no match | Array has every listed value; needs ≥ 1 value. |
+
+Negated ops keep NULL rows because the library has no NOT operator: they are
+how users say "not X", and "status is not draft" is expected to include rows
+with no status. This matches `notEmpty`, which treats NULL as empty. An app
+that wants SQL's plain three-valued behaviour overrides the op via
+`createDrizzleTranslator({ ops })`.
 
 ### Q10 — Draft vs Valid AST
 
