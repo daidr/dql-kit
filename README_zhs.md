@@ -13,7 +13,9 @@
 | Package | 描述 |
 |---|---|
 | [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、解析不可信输入的 `parseAst`、生成请求体校验的 `toJsonSchema`、URL 序列化、内存过滤用的 `createMatcher`。零 ORM / 框架 / i18n 依赖。 |
-| [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM 翻译器，**仅支持 PostgreSQL**。解析后的 AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
+| [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | 面向 PostgreSQL 的 Drizzle ORM 翻译器。解析后的 AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
+| [`@dql-kit/drizzle-sqlite`](./packages/drizzle-sqlite) | 同一套翻译器的 SQLite 版本（数组存为 JSON 文本，时间点存为 ISO 文本或整数时间戳）。 |
+| [`@dql-kit/drizzle-mysql`](./packages/drizzle-mysql) | 同一套翻译器的 MySQL 8 版本（数组存为 JSON 列，大小写规则由排序规则决定）。 |
 | [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` —— 把 `toJsonSchema` 的结果转成 TypeBox schema，例如用作 Elysia 路由的 body。 |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` 组合式函数 + `createDqlKit` Vue 插件。通过 `UrlAdapter` 实现可插拔的 URL 同步（此处不引入 `vue-router`）。 |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` —— 面向 vue-router 应用的 `UrlAdapter`。 |
@@ -204,8 +206,9 @@ app.post('/articles/query', handler, {
 })
 ```
 
-**仅支持 PostgreSQL。** 内置 op 生成的是 PG 专有 SQL（`ILIKE`、`= ANY(col)`、
-`@>`、`&&`、`cardinality`、`NOW() - INTERVAL`）。
+**PostgreSQL SQL。** 内置 op 生成的是 PG 专有 SQL（`ILIKE`、`= ANY(col)`、
+`@>`、`&&`、`cardinality`、`NOW() - INTERVAL`）。SQLite 和 MySQL 请使用
+`@dql-kit/drizzle-sqlite` / `@dql-kit/drizzle-mysql`（见下文），API 完全相同。
 
 **字符串默认不区分大小写。** 所有字符串 op（包括 `eq` 和 `in`）都不区分大小写
 （`lower(col) = lower(v)`、`ILIKE`）。需要精确比较时用
@@ -307,6 +310,25 @@ const rows = await db.select().from(table.articles).where(translator.toWhere(par
 ```
 
 建议启动时为每个角色构建一次子集，不要每个请求都重新构建：部分查找结果按 schema 对象缓存。
+
+### SQLite 与 MySQL
+
+`@dql-kit/drizzle-sqlite` 和 `@dql-kit/drizzle-mysql` 导出的 `createDrizzleTranslator`、
+`drizzleOps`、`existsOp` / `notExistsOp` 以及 `columns: { field: null }` 与 PG 适配器相同，
+并通过同一套 op 语义测试。方言无法翻译的 op 会在创建 translator 时报错。时间点字段上的相对
+时间 op（`datetime` 字段的 `inLast` / `inNext`）按 translator 的时钟（`now`）计算，而不是
+数据库的时钟。
+
+**SQLite**
+- 时间点存为 `toISOString()` 文本，或存在 `integer({ mode: 'timestamp' | 'timestamp_ms' })` 列中。
+- 文本列上的 `date` 字段存 `YYYY-MM-DD` 格式的日期。如果要按 translator 的 `timeZone` 切分日期，把 `date` 字段放在时间戳列上。
+- 数组是 JSON 文本列（`text({ mode: 'json' })`），用 `json_each` 查询。
+- 不区分大小写的 op 使用 `lower()` / `LIKE`，只能折叠 ASCII 字母。`caseSensitive` 字段使用 `=`、`instr` 和 `substr`。
+
+**MySQL 8.0.17+**
+- 时间点以 UTC 字面量传入，因此 `DATETIME` 值请按 UTC 存储。`TIMESTAMP` 列需要 UTC 会话（`SET time_zone = '+00:00'`，驱动也要设为 UTC）。`DATE` 列存的是不带时区的日期。
+- 数组是 `JSON` 列，用 `JSON_CONTAINS` / `JSON_OVERLAPS` 查询。
+- 字符串 op 遵循列的排序规则（collation）。使用 `_ci` 排序规则（默认）时，字符串与其他方言一样不区分大小写；在 `_bin` 或 `_cs` 列上则区分大小写。`caseSensitive` 字段始终按二进制比较。
 
 ### 5. 在内存中过滤数据
 

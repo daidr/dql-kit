@@ -13,7 +13,9 @@ Type-safe, schema-driven filter / query AST library for dashboards.
 | Package | Description |
 |---|---|
 | [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, `parseAst` for untrusted input, `toJsonSchema` for request bodies, URL serialization, `createMatcher` for in-memory filtering. Zero ORM / framework / i18n deps. |
-| [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM translator, **PostgreSQL only**. Parsed AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
+| [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM translator for PostgreSQL. Parsed AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
+| [`@dql-kit/drizzle-sqlite`](./packages/drizzle-sqlite) | The same translator for SQLite (arrays as JSON text, instants as ISO text or integer timestamps). |
+| [`@dql-kit/drizzle-mysql`](./packages/drizzle-mysql) | The same translator for MySQL 8 (arrays as JSON columns, collation-driven case folding). |
 | [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` — the `toJsonSchema` output as a TypeBox schema, e.g. for an Elysia route body. |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` composable + `createDqlKit` Vue plugin. Pluggable URL sync via `UrlAdapter` (`vue-router` not imported here). |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` — `UrlAdapter` for vue-router apps. |
@@ -212,8 +214,10 @@ app.post('/articles/query', handler, {
 })
 ```
 
-**PostgreSQL only.** The built-in op handlers emit PG-specific SQL (`ILIKE`,
-`= ANY(col)`, `@>`, `&&`, `cardinality`, `NOW() - INTERVAL`).
+**PostgreSQL SQL.** The built-in op handlers emit PG-specific SQL (`ILIKE`,
+`= ANY(col)`, `@>`, `&&`, `cardinality`, `NOW() - INTERVAL`). For SQLite and
+MySQL use `@dql-kit/drizzle-sqlite` / `@dql-kit/drizzle-mysql` (below); the
+API is the same.
 
 **Strings ignore case by default.** Every string op, `eq` and `in` included,
 compares case-insensitively (`lower(col) = lower(v)`, `ILIKE`). Pass
@@ -324,6 +328,26 @@ const rows = await db.select().from(table.articles).where(translator.toWhere(par
 
 Build each role's subset once at startup rather than per request: some
 lookups are cached per schema object.
+
+### SQLite and MySQL
+
+`@dql-kit/drizzle-sqlite` and `@dql-kit/drizzle-mysql` export the same
+`createDrizzleTranslator`, `drizzleOps`, `existsOp` / `notExistsOp` and
+`columns: { field: null }` as the PG adapter, and pass the same op-semantics
+suite. An op a dialect can't translate fails when the translator is built.
+Relative ops on instants (`inLast` / `inNext` on `datetime` fields) are computed
+from the translator's clock (`now`), not the database's.
+
+**SQLite**
+- Store instants as `toISOString()` text, or in `integer({ mode: 'timestamp' | 'timestamp_ms' })` columns.
+- A `date` field on a text column holds `YYYY-MM-DD` days. Put a `date` field on a timestamp column to cut days in the translator's `timeZone`.
+- Arrays are JSON text columns (`text({ mode: 'json' })`), queried with `json_each`.
+- Case-insensitive ops use `lower()` / `LIKE`, which fold ASCII letters only. `caseSensitive` fields use `=`, `instr` and `substr`.
+
+**MySQL 8.0.17+**
+- Instants are sent as UTC literals, so store `DATETIME` values in UTC. `TIMESTAMP` columns need a UTC session (`SET time_zone = '+00:00'`, and a driver set to UTC). `DATE` columns hold plain days.
+- Arrays are `JSON` columns, queried with `JSON_CONTAINS` / `JSON_OVERLAPS`.
+- String ops follow the column's collation. With a `_ci` collation (the default), strings ignore case as on the other dialects; on a `_bin` or `_cs` column they don't. `caseSensitive` fields always compare as binary.
 
 ### 5. Filter rows in memory
 

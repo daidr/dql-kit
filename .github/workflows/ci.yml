@@ -21,6 +21,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # For the @dql-kit/drizzle-mysql tests.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: dqlkit
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
     steps:
       - uses: actions/checkout@v5
 
@@ -45,3 +60,5 @@ jobs:
 
       - name: Test
         run: bun run test
+        env:
+          MYSQL_URL: mysql://root:root@127.0.0.1:3306/dqlkit
