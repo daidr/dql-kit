@@ -172,20 +172,15 @@ describe('createDrizzleTranslator — SQL execution', () => {
     expect(() => t.toWhere(r.ast)).not.toThrow()
   })
 
-  test('AST referencing op without translator throws helpfully', async () => {
+  test('a schema op without a translator fails at construction', async () => {
     const customSchema = defineFilterSchema({
       fields: {
         title: f.string(),
         rating: f.number().withOps([{ name: 'noSuchOp', valueShape: 'single', label: '?' }]),
       },
     })
-    const t = createDrizzleTranslator({ schema: customSchema, table: articles })
-    const r = parseAst(
-      { combinator: 'and', children: [{ field: 'rating', op: 'noSuchOp', value: 1 }] },
-      customSchema,
-    )
-    if (!r.ok) throw new Error('expected ok')
-    expect(() => t.toWhere(r.ast)).toThrow(/No SQL translator registered for op "noSuchOp"/)
+    expect(() => createDrizzleTranslator({ schema: customSchema, table: articles }))
+      .toThrow(/No SQL translator registered for op "noSuchOp" on field "rating"/)
   })
 
   test('an AST checked against a field subset runs on the full-schema translator', async () => {
@@ -1457,18 +1452,11 @@ describe('createDrizzleTranslator — custom op via registerOp', () => {
   })
 
   test('translator throws an actionable error if a custom op never gets supplied', () => {
-    const t = createDrizzleTranslator({
+    // Note: no `ops: { moneyEq }` here.
+    expect(() => createDrizzleTranslator({
       schema: moneySchema,
       columns: { price: moneyArticles.priceAmount },
-    })
-    // Note: no `ops: { moneyEq }` here.
-    const ast: ValidAST = {
-      combinator: 'and',
-      children: [
-        { field: 'price', op: 'moneyEq', value: { amount: 1, currency: 'USD' } },
-      ],
-    }
-    expect(() => t.toWhere(checked(ast))).toThrow(/No SQL translator registered for op "moneyEq"/)
+    })).toThrow(/No SQL translator registered for op "moneyEq"[\s\S]*ops: \{ moneyEq/)
   })
 })
 

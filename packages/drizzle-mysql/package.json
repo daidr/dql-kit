@@ -1,0 +1,39 @@
+{
+  "name": "@dql-kit/drizzle-mysql",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": {
+        "types": "./src/index.ts",
+        "import": "./src/index.ts"
+      },
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target node --format esm --external drizzle-orm --external @dql-kit/core && tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@dql-kit/core": "workspace:*",
+    "@dql-kit/drizzle-common": "workspace:*"
+  },
+  "peerDependencies": {
+    "drizzle-orm": ">=0.30.0"
+  },
+  "devDependencies": {
+    "drizzle-orm": "^0.45.4",
+    "mysql2": "^3.11.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

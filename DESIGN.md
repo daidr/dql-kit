@@ -199,6 +199,14 @@ against MySQL or SQLite through Drizzle will produce invalid SQL. A
 dialect-neutral adapter would be a separate package (or a per-dialect op map). The package was
 renamed from `@dql-kit/drizzle` to `@dql-kit/drizzle-pg` so the name says so;
 adapters for other dialects would follow the same `drizzle-<dialect>` pattern.
+**Update**: they do. `@dql-kit/drizzle-sqlite` and `@dql-kit/drizzle-mysql`
+share the translator with drizzle-pg through the workspace-internal
+`@dql-kit/drizzle-common` (column mapping, op checks, tree walk, NULL handling,
+day ranges and calendar bounds); each dialect supplies only how it matches
+strings, queries arrays and passes dates. All three run the shared semantics
+suite. An op the dialect can't translate now fails when the translator is
+built instead of at query time. SQLite and MySQL compute relative bounds on
+instants from the translator's clock; PG keeps `NOW()`.
 
 **`date` values are UTC days.** ~~Against a `timestamp` column, `eq` /
 `before` / `after` / `between` cut days at UTC midnight.~~ **Superseded**: the
