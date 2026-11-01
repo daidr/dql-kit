@@ -1,4 +1,4 @@
-import type { RelativeUnit } from './check.ts'
+import type { DATE_RELATIVE_UNITS, RelativeUnit } from './check.ts'
 import type {
   BuiltinFieldTypeId,
   FilterSchema,
@@ -13,7 +13,13 @@ import type {
 // a value `analyze` accepts must type-check here and vice versa.
 
 /** Value of a `relative`-shape op such as `inLast`. */
-export type RelativeValue = { amount: number, unit: RelativeUnit }
+export type RelativeValue<U extends RelativeUnit = RelativeUnit> = { amount: number, unit: U }
+
+// `date` fields only take day and coarser units (see `relativeUnitsFor`).
+type RelativeValueFor<F> =
+  F extends { delegateTo: 'date' } | { typeId: 'date' }
+    ? RelativeValue<(typeof DATE_RELATIVE_UNITS)[number]>
+    : RelativeValue
 
 // Scalar type of each builtin, as accepted by `checkValueType`. `date`
 // and `datetime` travel as ISO strings. `enum` / `id` are the open
@@ -71,6 +77,7 @@ type ConditionForOp<K extends string, F, O> =
     ? string extends N ? { field: K, op: string, value?: unknown }
     : ValueShape extends Shape ? { field: K, op: N, value?: unknown }
     : Shape extends 'none' ? { field: K, op: N, value?: undefined }
+    : Shape extends 'relative' ? { field: K, op: N, value: RelativeValueFor<F> }
     : { field: K, op: N, value: OpValue<Shape, FieldScalar<F>> }
     : never
 

@@ -171,7 +171,15 @@ app.post('/articles/query', handler, {
 ```
 
 **仅支持 PostgreSQL。** 内置 op 生成的是 PG 专有 SQL（`ILIKE`、`= ANY(col)`、
-`@>`、`cardinality`、`NOW() - INTERVAL`）。
+`@>`、`&&`、`cardinality`、`NOW() - INTERVAL`）。
+
+**字符串默认不区分大小写。** 所有字符串 op（包括 `eq` 和 `in`）都不区分大小写
+（`lower(col) = lower(v)`、`ILIKE`）。需要精确比较时用
+`f.string({ caseSensitive: true })`，这样 `eq` 也能用上普通索引；否则如果经常按
+该字段筛选，建议给 `lower(col)` 建表达式索引。
+
+**可空字段。** `f.number({ nullable: true })`（除 `array` 外的所有构造器都支持）
+会追加 `isEmpty` / `notEmpty`，翻译为 `IS NULL` / `IS NOT NULL`。
 
 **`date` 字段按整天（UTC）比较。** `eq '2024-01-31'` 会生成
 `col >= 2024-01-31 AND col < 2024-02-01`，`between` 会包含最后一整天，因此

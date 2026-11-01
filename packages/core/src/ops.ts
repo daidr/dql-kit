@@ -34,10 +34,16 @@ export const builtinOps = {
   lt:           def('lt',           'single'),
   lte:          def('lte',          'single'),
   between:      def('between',      'pair'),
+  notBetween:   def('notBetween',   'pair'),
   before:       def('before',       'single'),
   after:        def('after',        'single'),
+  onOrBefore:   def('onOrBefore',   'single'),
+  onOrAfter:    def('onOrAfter',    'single'),
   inLast:       def('inLast',       'relative'),
+  inNext:       def('inNext',       'relative'),
+  notInLast:    def('notInLast',    'relative'),
   containsAll:  def('containsAll',  'list'),
+  containsAny:  def('containsAny',  'list'),
 } as const satisfies Record<string, OpDef>
 
 export type BuiltinOpName = keyof typeof builtinOps

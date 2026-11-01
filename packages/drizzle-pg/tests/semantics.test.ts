@@ -18,6 +18,7 @@ import { createDrizzleTranslator } from '../src/index.ts'
 const rowsTable = pgTable('semantics_rows', {
   id: integer('id').primaryKey(),
   title: text('title'),
+  code: text('code'),
   rating: integer('rating'),
   status: text('status'),
   ownerId: integer('owner_id'),
@@ -25,6 +26,7 @@ const rowsTable = pgTable('semantics_rows', {
   day: date('day', { mode: 'string' }),
   at: timestamp('at', { withTimezone: true, mode: 'string' }),
   seenAt: timestamp('seen_at', { withTimezone: true, mode: 'string' }),
+  dueDay: date('due_day', { mode: 'string' }),
   tags: text('tags').array(),
 })
 
@@ -38,6 +40,7 @@ describe('drizzle-pg — shared semantics cases', () => {
       CREATE TABLE semantics_rows (
         id INTEGER PRIMARY KEY,
         title TEXT,
+        code TEXT,
         rating INTEGER,
         status TEXT,
         owner_id INTEGER,
@@ -45,6 +48,7 @@ describe('drizzle-pg — shared semantics cases', () => {
         day DATE,
         at TIMESTAMPTZ,
         seen_at TIMESTAMPTZ,
+        due_day DATE,
         tags TEXT[]
       );
     `)

@@ -61,7 +61,7 @@ describe('toJsonSchema', () => {
     expect(ok(cond('rating', 'between', [1]))).toBe(false)
     expect(ok(cond('publishedOn', 'eq', '2024-1-1'))).toBe(false)
     expect(ok(cond('occurredAt', 'inLast', { amount: 0, unit: 'day' }))).toBe(false)
-    expect(ok(cond('occurredAt', 'inLast', { amount: 1, unit: 'year' }))).toBe(false)
+    expect(ok(cond('occurredAt', 'inLast', { amount: 1, unit: 'decade' }))).toBe(false)
     expect(ok(cond('keyword', 'contains', 1))).toBe(false)
     expect(ok(cond('blob', 'eq', [1]))).toBe(false)
     expect(ok(cond('blob', 'eq', { amount: 1, unit: 'day' }))).toBe(false)
@@ -129,5 +129,13 @@ describe('toJsonSchema', () => {
         }
       }
     }
+  })
+})
+
+describe('toJsonSchema relative units', () => {
+  test('date fields list only day and coarser units', () => {
+    const js = JSON.stringify(toJsonSchema(defineFilterSchema({ fields: { due: f.date() } })))
+    expect(js).toContain('"enum":["day","week","month","year"]')
+    expect(js).not.toContain('"minute"')
   })
 })

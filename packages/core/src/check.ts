@@ -5,12 +5,20 @@ import type { FieldDef, ValueShape } from './types.ts'
 // uses sql.raw to keep PG's interval syntax — so the codec layer is the right
 // place to refuse anything outside the documented set rather than relying on
 // the adapter for safety.
-export const RELATIVE_UNITS = ['minute', 'hour', 'day', 'week', 'month'] as const
+export const RELATIVE_UNITS = ['minute', 'hour', 'day', 'week', 'month', 'year'] as const
 export type RelativeUnit = (typeof RELATIVE_UNITS)[number]
 const relativeUnitSet = new Set<string>(RELATIVE_UNITS)
 
 export const isRelativeUnit = (s: unknown): s is RelativeUnit =>
   typeof s === 'string' && relativeUnitSet.has(s)
+
+// `date` fields count whole days, so sub-day units make no sense there.
+export const DATE_RELATIVE_UNITS = ['day', 'week', 'month', 'year'] as const
+const dateRelativeUnitSet = new Set<string>(DATE_RELATIVE_UNITS)
+
+/** The relative-time units a field accepts: day and coarser for `date`, all for the rest. */
+export const relativeUnitsFor = (field: FieldDef): readonly RelativeUnit[] =>
+  (field.delegateTo ?? field.typeId) === 'date' ? DATE_RELATIVE_UNITS : RELATIVE_UNITS
 
 export const checkShape = (value: unknown, shape: ValueShape): boolean => {
   switch (shape) {
@@ -105,7 +113,13 @@ export const checkValueType = (
   shape: ValueShape,
   value: unknown,
 ): boolean => {
-  if (shape === 'none' || shape === 'relative') return true
+  if (shape === 'none') return true
+  if (shape === 'relative') {
+    // Shape already checked the unit is known; `date` fields also refuse
+    // sub-day units.
+    if ((field.delegateTo ?? field.typeId) !== 'date') return true
+    return dateRelativeUnitSet.has((value as { unit: string }).unit)
+  }
 
   const elementField: FieldDef =
     field.typeId === 'array' && field.itemType ? field.itemType : field

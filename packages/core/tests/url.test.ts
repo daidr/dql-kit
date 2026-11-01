@@ -319,7 +319,7 @@ describe('fromUrl', () => {
   test('decoded inLast with disallowed unit is dropped (value_shape_mismatch)', () => {
     const compact = {
       c: 'and',
-      n: [{ f: 'occurredAt', o: 'inLast', v: { amount: 1, unit: 'year' } }],
+      n: [{ f: 'occurredAt', o: 'inLast', v: { amount: 1, unit: 'decade' } }],
     }
     const url = encodeURIComponent(JSON.stringify(compact))
     const result = fromUrl(url, schema)

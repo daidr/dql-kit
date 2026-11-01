@@ -1,19 +1,19 @@
-import { isRelativeUnit, type FieldDef } from '@dql-kit/core'
+import { isRelativeUnit, relativeDateRange, type FieldDef, type RelativeUnit } from '@dql-kit/core'
 import {
   and as andSql,
   arrayContains,
+  arrayOverlaps,
   between,
   eq,
   gt,
   gte,
   ilike,
   inArray,
+  like,
   isNotNull,
   isNull,
   lt,
   lte,
-  ne,
-  notInArray,
   or as orSql,
   sql,
   type AnyColumn,
@@ -80,25 +80,84 @@ const orNull = (col: AnyColumn, cond: SQL): SQL => orSql(isNull(col), cond)!
 // not "unknown") so callers don't need a separate `not(isEmpty)` wrapper.
 // The op translator branches on the effective typeId via the OpContext.
 
+// String fields ignore case unless declared `caseSensitive`: equality
+// folds both sides with `lower()`, pattern ops use `ILIKE`. Only plain
+// string fields (and customs delegating to `string`) fold for equality;
+// pattern ops (`contains` & co.) on undelegated customs keep `ILIKE`
+// unless the field says `caseSensitive`.
+const foldsCase = (field: FieldDef): boolean =>
+  effectiveTypeId(field) === 'string' && !field.caseSensitive
+const likeOp = (field: FieldDef) => (field.caseSensitive ? like : ilike)
+const likeSql = (field: FieldDef) => (field.caseSensitive ? sql`LIKE` : sql`ILIKE`)
+const lowerEq = (col: AnyColumn, v: unknown): SQL => sql`lower(${col}) = lower(${String(v)})`
+const lowerIn = (col: AnyColumn, vs: unknown[]): SQL =>
+  sql`lower(${col}) IN (${sql.join(vs.map((v) => sql`lower(${String(v)})`), sql`, `)})`
+
+const eqSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
+  if (isDayField(field)) return andSql(gte(col, dayStart(v) as never), lt(col, nextDay(v) as never))!
+  if (foldsCase(field)) return lowerEq(col, v)
+  return eq(col, coerceDateValue(field, v) as never)
+}
+const inSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
+  if (foldsCase(field)) return lowerIn(col, v as unknown[])
+  return inArray(col, coerceDateValue(field, v) as never[])
+}
+const betweenSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
+  if (isDayField(field)) {
+    const [a, b] = v as [unknown, unknown]
+    return andSql(gte(col, dayStart(a) as never), lt(col, nextDay(b) as never))!
+  }
+  const [a, b] = coerceDateValue(field, v) as [unknown, unknown]
+  return between(col, a as never, b as never)
+}
+
+// `unit` is interpolated into `sql.raw`, so re-check it even though core
+// already validated it: a failed re-check means a tampered AST or a
+// custom op flowing through, and must not become SQL.
+const intervalSql = (v: unknown): SQL => {
+  const { amount, unit } = (v ?? {}) as { amount: unknown, unit: unknown }
+  const a = Number(amount)
+  if (!Number.isFinite(a) || a <= 0) {
+    throw new Error(`[dql-kit/drizzle-pg] relative value: amount must be a positive finite number, got ${String(amount)}`)
+  }
+  if (!isRelativeUnit(unit)) {
+    throw new Error(`[dql-kit/drizzle-pg] relative value: unit must be one of minute/hour/day/week/month/year, got ${String(unit)}`)
+  }
+  return sql.raw(`INTERVAL '${a} ${unit}'`)
+}
+// `date` fields: whole UTC days around today, computed with the same
+// helper as the in-memory evaluator and passed as parameters, so a
+// `date` and a `timestamp` column cut days the same way.
+const relativeDays = (op: 'inLast' | 'inNext', v: unknown) => {
+  intervalSql(v) // validate
+  return relativeDateRange(op, v as { amount: number, unit: RelativeUnit }, new Date())
+}
+const inLastSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
+  if (isDayField(field)) return gte(col, dayStart(relativeDays('inLast', v).from) as never)
+  return sql`${col} >= NOW() - ${intervalSql(v)}`
+}
+const isEmptySql = (col: AnyColumn, field: FieldDef): SQL => {
+  const t = effectiveTypeId(field)
+  // Array empty: NULL or zero-length. cardinality(NULL) is NULL, so the
+  // explicit IS NULL branch is required to match the "no items" intent.
+  if (t === 'array') return orSql(isNull(col), sql`cardinality(${col}) = 0`)!
+  if (t === 'string') return orSql(isNull(col), eq(col, '' as never))!
+  // Everything else (numbers, dates, enums, ids, ...): only NULL is empty.
+  // Comparing those columns with '' would be a type error in PG.
+  return isNull(col)
+}
+
 export const drizzleOps: Record<string, OpTranslator> = {
-  eq:           (col, v, ctx) => {
-    if (isDayField(ctx.field)) {
-      return andSql(gte(col, dayStart(v) as never), lt(col, nextDay(v) as never))!
-    }
-    return eq(col, coerceDateValue(ctx.field, v) as never)
-  },
-  neq:          (col, v, ctx) => {
-    if (isDayField(ctx.field)) {
-      return orNull(col, orSql(lt(col, dayStart(v) as never), gte(col, nextDay(v) as never))!)
-    }
-    return orNull(col, ne(col, coerceDateValue(ctx.field, v) as never))
-  },
+  eq:           (col, v, ctx) => eqSql(col, v, ctx.field),
+  neq:          (col, v, ctx) => orNull(col, sql`NOT (${eqSql(col, v, ctx.field)})`),
+  in:           (col, v, ctx) => inSql(col, v, ctx.field),
+  notIn:        (col, v, ctx) => orNull(col, sql`NOT (${inSql(col, v, ctx.field)})`),
   contains:     (col, v, ctx) => {
     if (effectiveTypeId(ctx.field) === 'array') {
       // PG: scalar = ANY(array_column)
       return sql`${v} = ANY(${col})`
     }
-    return ilike(col, `%${escapeLike(String(v))}%`)
+    return likeOp(ctx.field)(col, `%${escapeLike(String(v))}%`)
   },
   notContains:  (col, v, ctx) => {
     if (effectiveTypeId(ctx.field) === 'array') {
@@ -107,61 +166,40 @@ export const drizzleOps: Record<string, OpTranslator> = {
       // still make `<> ALL` NULL; arrays with NULL items are not modelled.)
       return orNull(col, sql`${v} <> ALL(${col})`)
     }
-    return orNull(col, sql`${col} NOT ILIKE ${`%${escapeLike(String(v))}%`}`)
+    return orNull(col, sql`${col} NOT ${likeSql(ctx.field)} ${`%${escapeLike(String(v))}%`}`)
   },
-  startsWith:   (col, v) => ilike(col, `${escapeLike(String(v))}%`),
-  endsWith:     (col, v) => ilike(col, `%${escapeLike(String(v))}`),
-  isEmpty:      (col, _v, ctx) => {
-    if (effectiveTypeId(ctx.field) === 'array') {
-      // Array empty: NULL or zero-length. cardinality(NULL) is NULL, so the
-      // explicit IS NULL branch is required to match the "no items" intent.
-      return orSql(isNull(col), sql`cardinality(${col}) = 0`)!
-    }
-    return orSql(isNull(col), eq(col as AnyColumn, '' as never))!
-  },
-  notEmpty:     (col, _v, ctx) => {
-    if (effectiveTypeId(ctx.field) === 'array') {
-      // Boolean negation of isEmpty: must be non-NULL AND have at least
-      // one element. Treating NULL as "empty" (not "unknown") matches the
-      // intent users have when picking this op in the UI.
-      return andSql(isNotNull(col), sql`cardinality(${col}) > 0`)!
-    }
-    return andSql(isNotNull(col), ne(col as AnyColumn, '' as never))!
-  },
-  in:           (col, v, ctx) => inArray(col, coerceDateValue(ctx.field, v) as never[]),
-  notIn:        (col, v, ctx) => orNull(col, notInArray(col, coerceDateValue(ctx.field, v) as never[])),
+  startsWith:   (col, v, ctx) => likeOp(ctx.field)(col, `${escapeLike(String(v))}%`),
+  endsWith:     (col, v, ctx) => likeOp(ctx.field)(col, `%${escapeLike(String(v))}`),
+  isEmpty:      (col, _v, ctx) => isEmptySql(col, ctx.field),
+  // Boolean negation of isEmpty: NULL counts as empty, not "unknown".
+  notEmpty:     (col, _v, ctx) => sql`NOT (${isEmptySql(col, ctx.field)})`,
   gt:           (col, v, ctx) => gt(col, coerceDateValue(ctx.field, v) as never),
   gte:          (col, v, ctx) => gte(col, coerceDateValue(ctx.field, v) as never),
   lt:           (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
   lte:          (col, v, ctx) => lte(col, coerceDateValue(ctx.field, v) as never),
-  between:      (col, v, ctx) => {
-    if (isDayField(ctx.field)) {
-      const [a, b] = v as [unknown, unknown]
-      return andSql(gte(col, dayStart(a) as never), lt(col, nextDay(b) as never))!
-    }
-    const [a, b] = coerceDateValue(ctx.field, v) as [unknown, unknown]
-    return between(col, a as never, b as never)
-  },
+  between:      (col, v, ctx) => betweenSql(col, v, ctx.field),
+  notBetween:   (col, v, ctx) => orNull(col, sql`NOT (${betweenSql(col, v, ctx.field)})`),
   before:       (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
   after:        (col, v, ctx) => {
     if (isDayField(ctx.field)) return gte(col, nextDay(v) as never)
     return gt(col, coerceDateValue(ctx.field, v) as never)
   },
-  inLast:       (col, v) => {
-    // Defence-in-depth: core/check.ts already rejects anything outside the
-    // documented unit set, but `unit` is interpolated into sql.raw so we
-    // re-check here too. A failed re-check signals AST tampering or a custom
-    // op flowing through; throw rather than silently emit unsafe SQL.
-    const { amount, unit } = (v ?? {}) as { amount: unknown, unit: unknown }
-    const a = Number(amount)
-    if (!Number.isFinite(a) || a <= 0) {
-      throw new Error(`[dql-kit/drizzle-pg] inLast: amount must be a positive finite number, got ${String(amount)}`)
-    }
-    if (!isRelativeUnit(unit)) {
-      throw new Error(`[dql-kit/drizzle-pg] inLast: unit must be one of minute/hour/day/week/month, got ${String(unit)}`)
-    }
-    return sql`${col} >= NOW() - ${sql.raw(`INTERVAL '${a} ${unit}'`)}`
+  onOrBefore:   (col, v, ctx) => {
+    if (isDayField(ctx.field)) return lt(col, nextDay(v) as never)
+    return lte(col, coerceDateValue(ctx.field, v) as never)
   },
+  onOrAfter:    (col, v, ctx) => gte(col, coerceDateValue(ctx.field, v) as never),
+  inLast:       (col, v, ctx) => inLastSql(col, v, ctx.field),
+  inNext:       (col, v, ctx) => {
+    if (isDayField(ctx.field)) {
+      const r = relativeDays('inNext', v)
+      return andSql(gte(col, dayStart(r.from) as never), lt(col, nextDay(r.to) as never))!
+    }
+    return sql`(${col} >= NOW() AND ${col} <= NOW() + ${intervalSql(v)})`
+  },
+  // Exact negation of inLast: NULL rows match ("not seen recently"
+  // includes "never seen").
+  notInLast:    (col, v, ctx) => orNull(col, sql`NOT (${inLastSql(col, v, ctx.field)})`),
   // PG: array @> array — left contains every element of right (superset).
   // Use drizzle's arrayContains helper rather than inlining `@>` so the
   // parameter is encoded as a PG ARRAY literal instead of a record/tuple.
@@ -172,6 +210,13 @@ export const drizzleOps: Record<string, OpTranslator> = {
     const arr = (v as unknown[]) ?? []
     if (arr.length === 0) return sql`true`
     return arrayContains(col, arr as never[])
+  },
+  // PG: array && array — at least one shared element. An empty list
+  // shares nothing (only reachable through a cast AST, see containsAll).
+  containsAny:  (col, v) => {
+    const arr = (v as unknown[]) ?? []
+    if (arr.length === 0) return sql`false`
+    return arrayOverlaps(col, arr as never[])
   },
 }
 

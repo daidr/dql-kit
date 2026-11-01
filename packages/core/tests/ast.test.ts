@@ -492,10 +492,10 @@ describe('prune', () => {
     expect(prune(draft, schema).children).toHaveLength(1)
   })
 
-  test('datetime inLast drops an unsupported unit (year)', () => {
+  test('datetime inLast drops an unsupported unit (decade)', () => {
     const draft: DraftAST = {
       combinator: 'and',
-      children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'year' } }],
+      children: [{ field: 'occurredAt', op: 'inLast', value: { amount: 1, unit: 'decade' } }],
     }
     expect(prune(draft, schema).children).toHaveLength(0)
   })

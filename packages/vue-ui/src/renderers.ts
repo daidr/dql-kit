@@ -1,5 +1,5 @@
 import {
-  RELATIVE_UNITS,
+  relativeUnitsFor,
   type FieldDef,
   type Label,
   type RelativeUnit,
@@ -551,10 +551,16 @@ export const DateTimeRangeInput = defineComponent({
   },
 })
 
-export const DateTimeInLastInput = defineComponent({
-  name: 'DqlDateTimeInLastInput',
+/**
+ * Amount + unit input for `relative`-shape ops (`inLast`, `inNext`,
+ * `notInLast`). Offers the units the field accepts: all of them for
+ * `datetime`, day and coarser for `date`.
+ */
+export const RelativeInput = defineComponent({
+  name: 'DqlRelativeInput',
   props: baseProps,
   setup(props) {
+    const units = computed(() => relativeUnitsFor(props.field))
     // Local unit selection — independent of props.value so the user's
     // unit pick survives even before they've typed an amount. Without
     // this, picking "week" before entering a number was silently lost
@@ -574,7 +580,7 @@ export const DateTimeInLastInput = defineComponent({
           && typeof (v as Record<string, unknown>).unit === 'string'
         ) {
           const u = (v as { unit: string }).unit
-          if ((RELATIVE_UNITS as readonly string[]).includes(u)) {
+          if ((units.value as readonly string[]).includes(u)) {
             localUnit.value = u as RelativeUnit
           }
         }
@@ -602,7 +608,7 @@ export const DateTimeInLastInput = defineComponent({
     }
 
     const updateUnit = (unit: string) => {
-      if (!(RELATIVE_UNITS as readonly string[]).includes(unit)) return
+      if (!(units.value as readonly string[]).includes(unit)) return
       localUnit.value = unit as RelativeUnit
       const a = amount.value
       // Only emit when amount is also valid; otherwise the partial
@@ -633,7 +639,7 @@ export const DateTimeInLastInput = defineComponent({
               value: localUnit.value,
               onChange: (e: Event) => updateUnit((e.target as HTMLSelectElement).value),
             },
-            RELATIVE_UNITS.map((u) =>
+            units.value.map((u) =>
               h('option', { value: u, 'data-testid': `inlast-unit-${u}` }, resolveRelativeUnitLabel(u)),
             ),
           ),
@@ -641,6 +647,9 @@ export const DateTimeInLastInput = defineComponent({
       )
   },
 })
+
+/** @deprecated Renamed to `RelativeInput`; it now serves date fields too. */
+export const DateTimeInLastInput = RelativeInput
 
 // Render the user-facing label text for an id, falling back through the
 // LabelStatus state machine: pending → '…', resolved → label, error → '#<id>'.
@@ -916,8 +925,8 @@ export const builtinRenderers: Readonly<Record<string, RendererSet>> = Object.fr
   number:   { default: NumberInput, pair: NumberPairInput, list: NumberTokenInput },
   boolean:  { default: BooleanSwitch },
   enum:     { default: EnumSelect, list: EnumMultiSelect },
-  date:     { default: DateInput, pair: DateRangeInput },
-  datetime: { default: DateTimeInput, pair: DateTimeRangeInput, relative: DateTimeInLastInput },
+  date:     { default: DateInput, pair: DateRangeInput, relative: RelativeInput },
+  datetime: { default: DateTimeInput, pair: DateTimeRangeInput, relative: RelativeInput },
   id:       { default: IdAutocompleteInput, list: IdMultiAutocompleteInput },
 })
 

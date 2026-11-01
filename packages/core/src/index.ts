@@ -21,7 +21,13 @@ export {
 } from './ast.ts'
 export { COMPACT_KEYS, toUrl, fromUrl } from './url.ts'
 export { parseAst, DEFAULT_AST_LIMITS } from './parse.ts'
-export { RELATIVE_UNITS, isRelativeUnit, type RelativeUnit } from './check.ts'
+export {
+  DATE_RELATIVE_UNITS,
+  RELATIVE_UNITS,
+  isRelativeUnit,
+  relativeUnitsFor,
+  type RelativeUnit,
+} from './check.ts'
 export {
   isStringField,
   isNumberField,
@@ -46,3 +52,4 @@ export {
   type Matcher,
   type OpMatcher,
 } from './evaluate.ts'
+export { relativeDateRange, shiftByInterval } from './relative.ts'
