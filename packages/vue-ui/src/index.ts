@@ -13,6 +13,7 @@ export {
   DateRangeInput,
   DateTimeInput,
   DateTimeRangeInput,
+  RelativeInput,
   DateTimeInLastInput,
   IdAutocompleteInput,
   IdMultiAutocompleteInput,

@@ -92,16 +92,20 @@ op-level negation (`neq`, `notIn`, `notContains`) is sufficient and clearer.
 
 | Type | Default ops |
 |---|---|
-| `string` | eq, neq, contains, startsWith, endsWith, isEmpty, notEmpty, in, notIn |
-| `number` | eq, neq, gt, gte, lt, lte, between, in |
+| `string` | eq, neq, contains, notContains, startsWith, endsWith, isEmpty, notEmpty, in, notIn |
+| `number` | eq, neq, gt, gte, lt, lte, between, notBetween, in, notIn |
 | `boolean` | eq |
 | `enum<T>` | eq, neq, in, notIn |
-| `date` | eq, before, after, between |
-| `datetime` | before, after, between, inLast |
+| `date` | eq, before, after, onOrBefore, onOrAfter, between, inLast, inNext, notInLast |
+| `datetime` | before, after, onOrBefore, onOrAfter, between, inLast, inNext, notInLast |
 | `id<T>` | eq, neq, in, notIn (requires `search` + `resolve`) |
-| `array<U>` | contains, notContains, containsAll, isEmpty, notEmpty |
+| `array<U>` | contains, notContains, containsAll, containsAny, isEmpty, notEmpty |
 
 `f.custom({ typeId, ops, ... })` for project-specific types (money, duration, etc.).
+
+Every builder except `array` takes `nullable: true`, which adds `isEmpty` /
+`notEmpty` (string already has them). `f.string({ caseSensitive: true })` makes
+every string op compare exactly; by default all of them ignore case.
 
 **Why split `date` vs `datetime`**: different SQL semantics, different UI controls
 (calendar vs date-time picker), different relative-time semantics ("inLast 7d"
@@ -218,20 +222,29 @@ also zero length.
 
 | Op | Shapes | NULL column | Notes |
 |---|---|---|---|
-| `eq` / `in` | single / list | no match | `in` needs ≥ 1 value (empty list is `incomplete`). Strings compare exactly. `date` → whole day. |
+| `eq` / `in` | single / list | no match | `in` needs ≥ 1 value (empty list is `incomplete`). Strings ignore case unless `caseSensitive`. `date` → whole day. |
 | `neq` / `notIn` | single / list | **match** | Negation of `eq` / `in` that keeps NULL rows. `notIn` needs ≥ 1 value. |
-| `contains` (string) | single | no match | Case-insensitive substring; `%`, `_`, `\` are literal. |
+| `contains` (string) | single | no match | Substring; ignores case unless `caseSensitive`; `%`, `_`, `\` are literal. |
 | `notContains` (string) | single | **match** | Negation of `contains`; `''` matches. |
-| `startsWith` / `endsWith` | single | no match | Case-insensitive; wildcards literal. |
-| `isEmpty` | none | match | String: NULL or `''`. Array: NULL or zero length. |
+| `startsWith` / `endsWith` | single | no match | Ignore case unless `caseSensitive`; wildcards literal. |
+| `isEmpty` | none | match | String: NULL or `''`. Array: NULL or zero length. Other types (`nullable: true`): NULL. |
 | `notEmpty` | none | no match | Exact negation of `isEmpty`. |
 | `gt` / `gte` / `lt` / `lte` | single | no match | |
 | `between` | pair | no match | Inclusive both ends; lower ≤ upper or `invalid_range`. `date` → `[a, b+1)`. |
+| `notBetween` | pair | **match** | Negation of `between`. |
 | `before` / `after` | single | no match | Exclusive. `date`: `before d` = earlier days, `after d` = later days. |
-| `inLast` | relative | no match | `col >= NOW() - amount unit` (database clock). |
-| `contains` (array) | single | no match | Value is an element. |
+| `onOrBefore` / `onOrAfter` | single | no match | Inclusive. `date`: the day itself counts. |
+| `inLast` | relative | no match | `datetime`: `col >= NOW() - amount unit` (database clock). `date`: on or after the UTC day `today - amount unit`. No upper bound. |
+| `inNext` | relative | no match | `datetime`: `NOW() <= col <= NOW() + amount unit`. `date`: today through `today + amount unit`, inclusive. |
+| `notInLast` | relative | **match** | Exact negation of `inLast` ("not seen recently" includes "never seen"). |
+| `contains` (array) | single | no match | Value is an element (exact). |
 | `notContains` (array) | single | **match** | Value is not an element; a NULL array has no elements. |
 | `containsAll` | list | no match | Array has every listed value; needs ≥ 1 value. |
+| `containsAny` | list | no match | Array shares at least one value; needs ≥ 1 value. |
+
+Relative units are `minute`, `hour`, `day`, `week`, `month`, `year`; `date`
+fields take `day` and coarser. Months and years move on the calendar and clamp
+to the end of a shorter month, as in PostgreSQL.
 
 Negated ops keep NULL rows because the library has no NOT operator: they are
 how users say "not X", and "status is not draft" is expected to include rows

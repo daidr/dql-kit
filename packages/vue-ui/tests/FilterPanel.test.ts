@@ -674,7 +674,26 @@ describe('FilterPanel — datetime inLast renderer', () => {
     expect((unit.element as HTMLSelectElement).value).toBe('day')
   })
 
-  it('all five documented relative units are options in the unit select', () => {
+  it('a date field offers only day and coarser units', () => {
+    const dateSchema = defineFilterSchema({ fields: { due: f.date() } })
+    const filter = useFilter({
+      schema: dateSchema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'due', op: 'inNext', value: { amount: 1, unit: 'week' } }],
+      },
+    })
+    const wrapper = mount(FilterPanel, { props: { filter } })
+    for (const u of ['day', 'week', 'month', 'year']) {
+      expect(wrapper.find(`[data-testid="inlast-unit-${u}"]`).exists()).toBe(true)
+    }
+    for (const u of ['minute', 'hour']) {
+      expect(wrapper.find(`[data-testid="inlast-unit-${u}"]`).exists()).toBe(false)
+    }
+  })
+
+  it('all six documented relative units are options in the unit select', () => {
     const filter = useFilter({
       schema,
       sync: 'none',
@@ -684,7 +703,7 @@ describe('FilterPanel — datetime inLast renderer', () => {
       },
     })
     const wrapper = mount(FilterPanel, { props: { filter } })
-    for (const u of ['minute', 'hour', 'day', 'week', 'month']) {
+    for (const u of ['minute', 'hour', 'day', 'week', 'month', 'year']) {
       expect(wrapper.find(`[data-testid="inlast-unit-${u}"]`).exists()).toBe(true)
     }
   })

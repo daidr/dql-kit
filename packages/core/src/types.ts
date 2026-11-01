@@ -62,6 +62,9 @@ export interface FieldDef<O extends OpDef = OpDef> {
   // typeId be a *routing tag* (consumed by adapter overrides) without
   // forcing the consumer to re-implement every op handler from scratch.
   delegateTo?: BuiltinFieldTypeId
+  // String fields (or customs delegating to `string`): compare
+  // case-sensitively. Absent / false = every string op ignores case.
+  caseSensitive?: boolean
 }
 
 // Per-typeId narrowed shapes — these are what `f.string()`, `f.id<ID>()`

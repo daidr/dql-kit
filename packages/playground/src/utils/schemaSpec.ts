@@ -1,19 +1,16 @@
 import { f, defineFilterSchema } from '@dql-kit/core'
 import type { FieldDef, FilterSchema, IdFetcher, Item } from '@dql-kit/core'
 
+type BaseSpec = { label?: string, group?: string, nullable?: boolean }
+
 export type FieldSpec =
-  | { type: 'string', label?: string, group?: string }
-  | { type: 'number', label?: string, group?: string }
-  | { type: 'boolean', label?: string, group?: string }
-  | {
-      type: 'enum'
-      values: Array<string | number>
-      label?: string
-      group?: string
-    }
-  | { type: 'date', label?: string, group?: string }
-  | { type: 'datetime', label?: string, group?: string }
-  | { type: 'id', label?: string, group?: string }
+  | (BaseSpec & { type: 'string', caseSensitive?: boolean })
+  | (BaseSpec & { type: 'number' })
+  | (BaseSpec & { type: 'boolean' })
+  | (BaseSpec & { type: 'enum', values: Array<string | number> })
+  | (BaseSpec & { type: 'date' })
+  | (BaseSpec & { type: 'datetime' })
+  | (BaseSpec & { type: 'id' })
   | {
       type: 'array'
       itemType: 'string' | 'number'
@@ -64,22 +61,23 @@ const buildField = (spec: FieldSpec): FieldDef => {
   const common: { label?: string, group?: string } = {}
   if (spec.label !== undefined) common.label = spec.label
   if (spec.group !== undefined) common.group = spec.group
+  const nullable = spec.type !== 'array' && spec.nullable === true
 
   switch (spec.type) {
     case 'string':
-      return f.string(common)
+      return f.string({ ...common, nullable, caseSensitive: spec.caseSensitive === true })
     case 'number':
-      return f.number(common)
+      return f.number({ ...common, nullable })
     case 'boolean':
-      return f.boolean(common)
+      return f.boolean({ ...common, nullable })
     case 'enum':
-      return f.enum(spec.values, common)
+      return f.enum(spec.values, { ...common, nullable })
     case 'date':
-      return f.date(common)
+      return f.date({ ...common, nullable })
     case 'datetime':
-      return f.datetime(common)
+      return f.datetime({ ...common, nullable })
     case 'id':
-      return f.id<number>(common)
+      return f.id<number>({ ...common, nullable })
     case 'array': {
       const item =
         spec.itemType === 'number' ? f.number() : f.string()
@@ -119,7 +117,7 @@ export const defaultSpec: SchemaSpec = {
   fields: {
     title:       { type: 'string',  label: '标题',  group: 'basic' },
     status:      { type: 'enum',    label: '状态',  group: 'basic', values: ['draft', 'published', 'archived'] },
-    views:       { type: 'number',  label: '阅读数', group: 'basic' },
+    views:       { type: 'number',  label: '阅读数', group: 'basic', nullable: true },
     isPinned:    { type: 'boolean', label: '置顶' },
     authorId:    { type: 'id',      label: '作者' },
     publishedAt: { type: 'datetime', label: '发布时间', group: 'time' },

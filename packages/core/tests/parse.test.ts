@@ -338,3 +338,35 @@ describe('entry points agree', () => {
     expect(fromUrl(toUrl(r.ast), schema)).toEqual({ ast: r.ast, dropped: [] })
   })
 })
+
+describe('M3 field options and ops', () => {
+  test('nullable adds isEmpty / notEmpty once', () => {
+    expect(f.number({ nullable: true }).ops.map((o) => o.name)).toContain('isEmpty')
+    expect(f.number().ops.map((o) => o.name)).not.toContain('isEmpty')
+    const names = f.string({ nullable: true }).ops.map((o) => o.name)
+    expect(names.filter((n) => n === 'isEmpty')).toHaveLength(1)
+  })
+
+  test('caseSensitive is stored on the field only when set', () => {
+    expect(f.string({ caseSensitive: true }).caseSensitive).toBe(true)
+    expect('caseSensitive' in f.string()).toBe(false)
+  })
+
+  test('date relative ops refuse sub-day units', () => {
+    const s = defineFilterSchema({ fields: { due: f.date() } })
+    const run = (unit: string) =>
+      parseAst({ combinator: 'and', children: [{ field: 'due', op: 'inLast', value: { amount: 1, unit } }] }, s)
+    expect(run('day').ok).toBe(true)
+    expect(run('year').ok).toBe(true)
+    expect(errorsOf(run('hour'))).toEqual([
+      { path: [0], code: 'value_type_mismatch', expected: 'date', got: 'object' },
+    ])
+  })
+
+  test('notBetween checks bound order like between', () => {
+    expect(errorsOf(parseAst(
+      { combinator: 'and', children: [{ field: 'viewsCount', op: 'notBetween', value: [5, 1] }] },
+      schema,
+    ))).toEqual([{ path: [0], code: 'invalid_range', op: 'notBetween' }])
+  })
+})

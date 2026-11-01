@@ -31,6 +31,7 @@ const schema = defineFilterSchema({
     title: f.string(),
     views: f.number(),
     pin: f.boolean(),
+    pinOrNull: f.boolean({ nullable: true }),
     status: f.enum(['draft', 'published'] as const),
     day: f.date(),
     createdAt: f.datetime(),
@@ -63,7 +64,11 @@ describe('typed AST: compile-time narrowing', () => {
     assertType<Equal<Extract<Cond, { field: 'pin' }>['op'], 'eq'>>()
     assertType<Equal<Extract<Cond, { field: 'keyword' }>['op'], 'contains' | 'eq'>>()
     assertType<Equal<Extract<Cond, { field: 'rating' }>['op'],
-      'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'between' | 'in' | 'scoreAbove'>>()
+      'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'between' | 'notBetween' | 'in' | 'notIn'
+      | 'scoreAbove'>>()
+    assertType<Equal<Extract<Cond, { field: 'pinOrNull' }>['op'], 'eq' | 'isEmpty' | 'notEmpty'>>()
+    assertType<Equal<Extract<Cond, { field: 'tags' }>['op'],
+      'contains' | 'notContains' | 'containsAll' | 'containsAny' | 'isEmpty' | 'notEmpty'>>()
   })
 
   test('values follow the op shape and field scalar', () => {
@@ -77,7 +82,11 @@ describe('typed AST: compile-time narrowing', () => {
     assertType<Equal<ValueOf<'tags', 'contains'>, string>>()
     assertType<Equal<ValueOf<'tags', 'containsAll'>, string[]>>()
     assertType<Equal<ValueOf<'createdAt', 'inLast'>,
-      { amount: number, unit: 'minute' | 'hour' | 'day' | 'week' | 'month' }>>()
+      { amount: number, unit: 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year' }>>()
+    assertType<Equal<ValueOf<'day', 'inLast'>,
+      { amount: number, unit: 'day' | 'week' | 'month' | 'year' }>>()
+    assertType<Equal<ValueOf<'tags', 'containsAny'>, string[]>>()
+    assertType<Equal<ValueOf<'views', 'notBetween'>, [number, number]>>()
     assertType<Equal<ValueOf<'fulltext', 'startsWith'>, string>>()
     assertType<Equal<ValueOf<'raw', 'eq'>, unknown>>()
     assertType<Equal<ValueOf<'rating', 'scoreAbove'>, number>>()
@@ -121,14 +130,16 @@ describe('typed AST: compile-time narrowing', () => {
       // @ts-expect-error id<number> rejects strings
       { field: 'authorId', op: 'eq', value: '1' },
       // @ts-expect-error unit outside the whitelist
-      { field: 'createdAt', op: 'inLast', value: { amount: 1, unit: 'year' } },
+      { field: 'createdAt', op: 'inLast', value: { amount: 1, unit: 'decade' } },
+      // @ts-expect-error date fields take no sub-day units
+      { field: 'day', op: 'inLast', value: { amount: 1, unit: 'hour' } },
       // @ts-expect-error none-shape op takes no value
       { field: 'title', op: 'isEmpty', value: 'x' },
     ]
     // Typed ASTs stay assignable to the loose form consumed by adapters.
     const loose: ValidAST = ok
     expect(loose.children).toHaveLength(3)
-    expect(bad).toHaveLength(7)
+    expect(bad).toHaveLength(8)
   })
 
   test('narrowing on field then op narrows value', () => {
@@ -185,5 +196,23 @@ describe('typed AST: entry points return schema-typed ASTs', () => {
     const base = f.number()
     base.withOps([scoreOp])
     expect(base.ops.map((o) => o.name)).not.toContain('scoreAbove')
+  })
+})
+
+describe('typed AST: nullable with explicit type arguments', () => {
+  test('f.id<ID>({ nullable: true }) and f.enum<V>(…, { nullable: true }) add the null ops', () => {
+    const s = defineFilterSchema({
+      fields: {
+        owner: f.id<number>({ nullable: true }),
+        plain: f.id<number>(),
+        kind: f.enum<'a' | 'b'>(['a', 'b'], { nullable: true }),
+      },
+    })
+    type C = ValidCondition<typeof s>
+    assertType<Equal<Extract<C, { field: 'owner' }>['op'], 'eq' | 'neq' | 'in' | 'notIn' | 'isEmpty' | 'notEmpty'>>()
+    assertType<Equal<Extract<C, { field: 'plain' }>['op'], 'eq' | 'neq' | 'in' | 'notIn'>>()
+    assertType<Equal<Extract<C, { field: 'kind' }>['op'], 'eq' | 'neq' | 'in' | 'notIn' | 'isEmpty' | 'notEmpty'>>()
+    assertType<Equal<Extract<C, { field: 'owner', op: 'eq' }>['value'], number>>()
+    expect(s.fields.owner.ops.map((o) => o.name)).toContain('isEmpty')
   })
 })

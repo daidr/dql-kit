@@ -31,7 +31,7 @@ export const randomAst = (schema: FilterSchema, rand: () => number, maxDepth = 4
     if (r < 0.65) return [scalar(), scalar()]
     if (r < 0.8) return Array.from({ length: Math.floor(rand() * 4) }, scalar)
     if (r < 0.95) {
-      return { amount: pick([1, 0, -1, 2.5, '3']), unit: pick([...RELATIVE_UNITS, 'year']) }
+      return { amount: pick([1, 0, -1, 2.5, '3']), unit: pick([...RELATIVE_UNITS, 'decade']) }
     }
     return [scalar()]
   }

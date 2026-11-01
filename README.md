@@ -173,7 +173,16 @@ app.post('/articles/query', handler, {
 ```
 
 **PostgreSQL only.** The built-in op handlers emit PG-specific SQL (`ILIKE`,
-`= ANY(col)`, `@>`, `cardinality`, `NOW() - INTERVAL`).
+`= ANY(col)`, `@>`, `&&`, `cardinality`, `NOW() - INTERVAL`).
+
+**Strings ignore case by default.** Every string op, `eq` and `in` included,
+compares case-insensitively (`lower(col) = lower(v)`, `ILIKE`). Pass
+`f.string({ caseSensitive: true })` for exact comparison, which also lets `eq`
+use a plain index; otherwise index `lower(col)` if you filter on it often.
+
+**Nullable fields.** `f.number({ nullable: true })` (and every other builder
+except `array`) adds `isEmpty` / `notEmpty`, which translate to `IS NULL` /
+`IS NOT NULL`.
 
 **`date` fields compare whole UTC days.** `eq '2024-01-31'` becomes
 `col >= 2024-01-31 AND col < 2024-02-01`, and `between` keeps all of its last

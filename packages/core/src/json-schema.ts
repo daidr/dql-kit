@@ -1,4 +1,4 @@
-import { DATE_PATTERN, DATETIME_PATTERN, RELATIVE_UNITS } from './check.ts'
+import { DATE_PATTERN, DATETIME_PATTERN, relativeUnitsFor } from './check.ts'
 import { resolveLimits } from './parse.ts'
 import type { AstLimits, FieldDef, FilterSchema, ValueShape } from './types.ts'
 
@@ -90,7 +90,7 @@ const valueSchema = (
         type: 'object',
         properties: {
           amount: { type: 'number', exclusiveMinimum: 0 },
-          unit: { enum: RELATIVE_UNITS },
+          unit: { enum: relativeUnitsFor(field) },
         },
         required: ['amount', 'unit'],
       }

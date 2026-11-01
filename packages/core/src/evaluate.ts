@@ -1,3 +1,5 @@
+import type { RelativeUnit } from './check.ts'
+import { relativeDateRange, shiftByInterval } from './relative.ts'
 import type { CheckedAST, FieldDef, FilterSchema, ValidNode } from './types.ts'
 
 /**
@@ -83,7 +85,16 @@ const keyOf = (field: FieldDef, v: unknown): unknown => {
   }
 }
 
+// String fields ignore case unless declared `caseSensitive`. Only plain
+// string fields (and customs delegating to `string`) fold; array
+// elements, enums and ids always compare exactly.
+const foldsCase = (field: FieldDef): boolean =>
+  effectiveTypeId(field) === 'string' && !field.caseSensitive
+const fold = (field: FieldDef, v: unknown): string =>
+  foldsCase(field) ? String(v).toLowerCase() : String(v)
+
 const same = (field: FieldDef, a: unknown, b: unknown): boolean => {
+  if (foldsCase(field)) return fold(field, a) === fold(field, b)
   const ka = keyOf(field, a)
   return ka !== undefined && ka === keyOf(field, b)
 }
@@ -101,7 +112,6 @@ const cmp = (pred: (c: number) => boolean) => (actual: unknown, value: unknown, 
   return c !== undefined && pred(c)
 }
 
-const lower = (v: unknown): string => String(v).toLowerCase()
 const isArrayField = (field: FieldDef): boolean => effectiveTypeId(field) === 'array'
 const asArray = (v: unknown): unknown[] | undefined => (Array.isArray(v) ? v : undefined)
 
@@ -113,37 +123,41 @@ const containsOp: OpMatcher = (actual, value, ctx) => {
   if (isArrayField(ctx.field)) {
     return (asArray(actual) ?? []).some((el) => same(ctx.field, el, value))
   }
-  return lower(actual).includes(lower(value))
+  return fold(ctx.field, actual).includes(fold(ctx.field, value))
 }
 const isEmptyOp: OpMatcher = (actual, _value, ctx) => {
   if (isNull(actual)) return true
   if (isArrayField(ctx.field)) return (asArray(actual) ?? []).length === 0
-  return actual === ''
+  if (effectiveTypeId(ctx.field) === 'string') return actual === ''
+  return false
+}
+const betweenOp: OpMatcher = (actual, value, ctx) => {
+  const [lo, hi] = value as [unknown, unknown]
+  return cmp((c) => c >= 0)(actual, lo, ctx) && cmp((c) => c <= 0)(actual, hi, ctx)
 }
 
-// `inLast` subtracts the interval from `now` the way PostgreSQL does:
-// fixed-length units in milliseconds, months on the calendar (clamped to
-// the end of a shorter month; a fractional month adds 30-day days).
-const UNIT_MS: Record<string, number> = {
-  minute: 60_000,
-  hour: 3_600_000,
-  day: DAY_MS,
-  week: 7 * DAY_MS,
+// Relative windows. For `datetime` they are instants around `now`
+// (PostgreSQL interval arithmetic, see `shiftByInterval`); for `date`
+// they are whole UTC days around today (see `relativeDateRange`).
+type Window = { from?: number, to?: number }
+const relativeWindow = (op: 'inLast' | 'inNext', value: unknown, ctx: MatchContext): Window => {
+  const v = value as { amount: number, unit: RelativeUnit }
+  if (effectiveTypeId(ctx.field) === 'date') {
+    const r = relativeDateRange(op, v, ctx.now)
+    return { from: toDay(r.from), to: r.to === undefined ? undefined : toDay(r.to) }
+  }
+  return op === 'inLast'
+    ? { from: shiftByInterval(ctx.now, v.amount, v.unit, -1).getTime() }
+    : { from: ctx.now.getTime(), to: shiftByInterval(ctx.now, v.amount, v.unit, 1).getTime() }
 }
-const subtractInterval = (now: Date, amount: number, unit: string): number => {
-  const fixed = UNIT_MS[unit]
-  if (fixed !== undefined) return now.getTime() - amount * fixed
-  // month
-  const whole = Math.trunc(amount)
-  const y = now.getUTCFullYear()
-  const m = now.getUTCMonth() - whole
-  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
-  const shifted = Date.UTC(
-    y, m, Math.min(now.getUTCDate(), lastDay),
-    now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds(), now.getUTCMilliseconds(),
-  )
-  return shifted - (amount - whole) * 30 * DAY_MS
+const inWindow = (op: 'inLast' | 'inNext'): OpMatcher => (actual, value, ctx) => {
+  if (isNull(actual)) return false
+  const k = keyOf(ctx.field, actual)
+  if (typeof k !== 'number') return false
+  const w = relativeWindow(op, value, ctx)
+  return (w.from === undefined || k >= w.from) && (w.to === undefined || k <= w.to)
 }
+const inLastOp = inWindow('inLast')
 
 export const builtinMatchers: Readonly<Record<string, OpMatcher>> = Object.freeze({
   eq: eqOp,
@@ -152,8 +166,10 @@ export const builtinMatchers: Readonly<Record<string, OpMatcher>> = Object.freez
   notIn: (actual, value, ctx) => !inOp(actual, value, ctx),
   contains: containsOp,
   notContains: (actual, value, ctx) => !containsOp(actual, value, ctx),
-  startsWith: (actual, value) => !isNull(actual) && lower(actual).startsWith(lower(value)),
-  endsWith: (actual, value) => !isNull(actual) && lower(actual).endsWith(lower(value)),
+  startsWith: (actual, value, ctx) =>
+    !isNull(actual) && fold(ctx.field, actual).startsWith(fold(ctx.field, value)),
+  endsWith: (actual, value, ctx) =>
+    !isNull(actual) && fold(ctx.field, actual).endsWith(fold(ctx.field, value)),
   isEmpty: isEmptyOp,
   notEmpty: (actual, value, ctx) => !isEmptyOp(actual, value, ctx),
   gt: cmp((c) => c > 0),
@@ -162,20 +178,24 @@ export const builtinMatchers: Readonly<Record<string, OpMatcher>> = Object.freez
   lte: cmp((c) => c <= 0),
   before: cmp((c) => c < 0),
   after: cmp((c) => c > 0),
-  between: (actual, value, ctx) => {
-    const [lo, hi] = value as [unknown, unknown]
-    return cmp((c) => c >= 0)(actual, lo, ctx) && cmp((c) => c <= 0)(actual, hi, ctx)
-  },
-  inLast: (actual, value, ctx) => {
-    if (isNull(actual)) return false
-    const t = toInstant(actual)
-    const { amount, unit } = value as { amount: number, unit: string }
-    return t !== undefined && t >= subtractInterval(ctx.now, amount, unit)
-  },
+  onOrBefore: cmp((c) => c <= 0),
+  onOrAfter: cmp((c) => c >= 0),
+  between: betweenOp,
+  notBetween: (actual, value, ctx) => isNull(actual) || !betweenOp(actual, value, ctx),
+  inLast: inLastOp,
+  inNext: inWindow('inNext'),
+  // Exact negation of inLast, so NULL rows match ("not seen recently"
+  // includes "never seen").
+  notInLast: (actual, value, ctx) => !inLastOp(actual, value, ctx),
   containsAll: (actual, value, ctx) => {
     const arr = asArray(actual)
     if (!arr) return false
     return (value as unknown[]).every((v) => arr.some((el) => same(ctx.field, el, v)))
+  },
+  containsAny: (actual, value, ctx) => {
+    const arr = asArray(actual)
+    if (!arr) return false
+    return (value as unknown[]).some((v) => arr.some((el) => same(ctx.field, el, v)))
   },
 })
 
