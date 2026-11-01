@@ -113,6 +113,14 @@ const filter = useFilter({
 // filter.describe(ast?)  —— 可读的筛选摘要（默认描述 committedValid）
 ```
 
+**id 字段。** fetcher 可以提供 `searchPage(query, cursor, signal)`，代替（或同时提供）
+`search`，返回 `{ items, nextCursor? }`。第一页的 `cursor` 为 `undefined`。这时
+`filter.search` 会有 `hasMore` 和 `loadMore()`，内置的 id 输入框会显示“加载更多”一行。
+选过的 id 按字段记录（`recentIds: { limit: 8, persist: 'session' }`），搜索框为空时作为候选
+显示。在多选 id 输入框中粘贴一组 id（用逗号、分号、空格或换行分隔）时，会通过 `resolve`
+查找这些 id（以字符串形式传入）。返回的 id 会被添加，直到列表上限，其余的会列为未找到。
+相关文案通过 `createDqlKit({ idInputLabels })` 设置。
+
 **字段分组。** 给字段设置 `group`，并在 schema 上声明 `groups: { key: { label,
 order } }`，`<FilterPanel>` 就会为每个分组渲染一个 `<optgroup>`（未分组的字段排在
 最后；只有一个分组时不显示分组标题）。

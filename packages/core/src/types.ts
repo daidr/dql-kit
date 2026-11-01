@@ -36,10 +36,32 @@ export type Item<ID = string | number> = {
   meta?: unknown
 }
 
-export type IdFetcher<ID = string | number> = {
-  search: (query: string, signal: AbortSignal) => Awaitable<Item<ID>[]>
-  resolve: (ids: ID[], signal: AbortSignal) => Awaitable<Item<ID>[]>
+/** One page of id search results; `nextCursor` absent = last page. */
+export type SearchPage<ID = string | number> = {
+  items: Item<ID>[]
+  nextCursor?: unknown
 }
+
+/**
+ * How the UI finds and labels ids. Give `search` for one-shot results,
+ * or `searchPage` (preferred when both are present) to load more
+ * results on demand: it gets `undefined` as the cursor for the first
+ * page, then each page's `nextCursor`. `resolve` turns ids into labels;
+ * ids pasted in bulk reach it as strings, so return items carrying the
+ * real id.
+ */
+export type IdFetcher<ID = string | number> = {
+  resolve: (ids: ID[], signal: AbortSignal) => Awaitable<Item<ID>[]>
+} & (
+  | {
+    search: (query: string, signal: AbortSignal) => Awaitable<Item<ID>[]>
+    searchPage?: (query: string, cursor: unknown, signal: AbortSignal) => Awaitable<SearchPage<ID>>
+  }
+  | {
+    search?: (query: string, signal: AbortSignal) => Awaitable<Item<ID>[]>
+    searchPage: (query: string, cursor: unknown, signal: AbortSignal) => Awaitable<SearchPage<ID>>
+  }
+)
 
 // FieldDef is the open structural type seen by internal consumers (ast,
 // url, drizzle ops). Builder functions return narrower per-typeId

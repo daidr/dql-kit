@@ -30,6 +30,13 @@ export type RelativeUnitLabels = Partial<Record<RelativeUnit, Label>>
  */
 export type PeriodLabels = Partial<Record<PeriodUnit | 'current' | 'previous' | 'next' | 'custom', Label>>
 export type OpLabels = Record<string, Label>
+/**
+ * Texts of the id inputs: the heading over recently picked ids, the
+ * button that loads more results, and the notices after a bulk paste
+ * (`notFound` precedes the ids that didn't resolve; `truncated` is
+ * shown when the paste went over the list limit).
+ */
+export type IdInputLabels = Partial<Record<'recent' | 'loadMore' | 'notFound' | 'truncated', Label>>
 
 export interface DqlKitOptions {
   /**
@@ -49,6 +56,8 @@ export interface DqlKitOptions {
    * custom). Without these, the UI falls back to the key itself.
    */
   periodLabels?: PeriodLabels
+  /** Texts of the id inputs (recent ids, load more, paste notices). */
+  idInputLabels?: IdInputLabels
   /**
    * Per-op-name display label. Overrides the OpDef.label baked into
    * the schema (which itself defaults to the op name). Use to
@@ -71,10 +80,12 @@ export interface DqlKitState {
   renderers: Map<string, RendererSet>
   relativeUnitLabels: RelativeUnitLabels
   periodLabels: PeriodLabels
+  idInputLabels: IdInputLabels
   opLabels: OpLabels
   registerRenderer: (typeId: string, set: RendererSet) => void
   setRelativeUnitLabels: (labels: RelativeUnitLabels) => void
   setPeriodLabels: (labels: PeriodLabels) => void
+  setIdInputLabels: (labels: IdInputLabels) => void
   setOpLabels: (labels: OpLabels) => void
 }
 
@@ -117,12 +128,14 @@ export const createDqlKit = (options: DqlKitOptions = {}): DqlKitInstance => {
     ...options.relativeUnitLabels,
   })
   const periodLabels = reactive<PeriodLabels>({ ...options.periodLabels })
+  const idInputLabels = reactive<IdInputLabels>({ ...options.idInputLabels })
   const opLabels = reactive<OpLabels>({ ...options.opLabels })
 
   const state: DqlKitState = {
     renderers,
     relativeUnitLabels,
     periodLabels,
+    idInputLabels,
     opLabels,
     registerRenderer(typeId, set) {
       renderers.set(typeId, set)
@@ -139,6 +152,12 @@ export const createDqlKit = (options: DqlKitOptions = {}): DqlKitInstance => {
         delete periodLabels[k]
       }
       Object.assign(periodLabels, labels)
+    },
+    setIdInputLabels(labels) {
+      for (const k of Object.keys(idInputLabels) as (keyof IdInputLabels)[]) {
+        delete idInputLabels[k]
+      }
+      Object.assign(idInputLabels, labels)
     },
     setOpLabels(labels) {
       for (const k of Object.keys(opLabels)) {

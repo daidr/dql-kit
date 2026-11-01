@@ -1,4 +1,4 @@
-import type { Item } from '@dql-kit/core'
+import type { IdFetcher, Item, SearchPage } from '@dql-kit/core'
 import { ref, type Ref } from 'vue'
 import type { LabelStatus } from './types.ts'
 
@@ -13,10 +13,32 @@ export type SearchSlotState<ID = string | number> = {
   loading: boolean
   error: Error | null
   results: Item<ID>[]
+  /** More results are available through `loadMore` (paged fetchers). */
+  hasMore: boolean
 }
 
 type Awaitable<T> = T | Promise<T>
 type SearchFn<ID = string | number> = (q: string, signal: AbortSignal) => Awaitable<Item<ID>[]>
+type SearchPageOf = SearchPage<string | number>
+type PageFn = (q: string, cursor: unknown, signal: AbortSignal) => Awaitable<SearchPageOf>
+/** A one-shot search function, or a fetcher with `search` / `searchPage`. */
+export type SearchSource = SearchFn | Pick<IdFetcher, 'search' | 'searchPage'>
+
+const toError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)))
+
+// Normalise every search source to a page fetcher. `key` is the user's
+// own function, so sync detection survives across calls.
+const toPageSource = (src: SearchSource): { key: object, fetch: PageFn } => {
+  if (typeof src === 'function') {
+    return { key: src, fetch: (q, _c, signal) => wrapItems(src(q, signal)) }
+  }
+  if (src.searchPage) return { key: src.searchPage, fetch: src.searchPage as PageFn }
+  const search = src.search as SearchFn
+  return { key: search, fetch: (q, _c, signal) => wrapItems(search(q, signal)) }
+}
+
+const wrapItems = (r: Awaitable<Item<string | number>[]>): Awaitable<SearchPageOf> =>
+  r instanceof Promise ? r.then((items) => ({ items })) : { items: r }
 type ResolveFn<ID = string | number> = (ids: ID[], signal: AbortSignal) => Awaitable<Item<ID>[]>
 
 export type AsyncOrchestrator = {
@@ -33,10 +55,16 @@ export type AsyncOrchestrator = {
   setQuery: (
     fieldKey: string,
     query: string,
-    fetcher: SearchFn,
+    fetcher: SearchSource,
     debounceMs: number,
     onPatch: (patch: Partial<SearchSlotState>) => void,
   ) => void
+  // Fetch the next page of the current search and append it (paged
+  // fetchers only; a no-op when there is no next page or one is loading).
+  loadMore: () => void
+  // Put already-known labels into the cache (e.g. items a bulk paste
+  // looked up), without fetching.
+  seedLabels: (fieldKey: string, items: Item<string | number>[]) => void
   // Batch-resolve labels for a list of ids on a given field. Cache is hit
   // exact: only ids missing from the cache are sent to the fetcher. Ids
   // whose last resolve failed (fetcher threw / rejected) become eligible
@@ -97,7 +125,7 @@ export const createAsyncOrchestrator = (
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let lastFieldKey: string | null = null
   // Learnt per fetcher function: true = returns synchronously.
-  const fetcherIsSync = new WeakMap<SearchFn, boolean>()
+  const fetcherIsSync = new WeakMap<object, boolean>()
 
   const cancelSearch = () => {
     if (searchAbort) searchAbort.abort()
@@ -107,6 +135,17 @@ export const createAsyncOrchestrator = (
       debounceTimer = null
     }
   }
+
+  // State of the current paged search, for `loadMore`.
+  let paging: {
+    epoch: number
+    query: string
+    fetch: PageFn
+    cursor: unknown
+    results: Item<string | number>[]
+    onPatch: (patch: Partial<SearchSlotState>) => void
+  } | null = null
+  let loadingMore = false
 
   const setQuery: AsyncOrchestrator['setQuery'] = (
     fieldKey,
@@ -119,13 +158,16 @@ export const createAsyncOrchestrator = (
     // honour `signal.aborted`; we additionally drop late resolutions via
     // the epoch check.
     cancelSearch()
+    paging = null
+    loadingMore = false
 
     searchEpoch++
     const myEpoch = searchEpoch
+    const source = toPageSource(fetcher)
 
     if (fieldKey !== lastFieldKey) {
       lastFieldKey = fieldKey
-      onPatch({ fieldKey, query, error: null, loading: false, results: [] })
+      onPatch({ fieldKey, query, error: null, loading: false, results: [], hasMore: false })
     } else {
       onPatch({ fieldKey, query, error: null })
     }
@@ -133,45 +175,88 @@ export const createAsyncOrchestrator = (
     const ac = new AbortController()
     searchAbort = ac
 
+    const landed = (page: SearchPageOf) => {
+      paging = page.nextCursor === undefined
+        ? null
+        : { epoch: myEpoch, query, fetch: source.fetch, cursor: page.nextCursor, results: page.items, onPatch }
+      onPatch({ loading: false, results: page.items, error: null, hasMore: paging !== null })
+    }
+
     const run = () => {
-      let result: ReturnType<SearchFn>
+      let result: Awaitable<SearchPageOf>
       try {
-        result = fetcher(query, ac.signal)
+        result = source.fetch(query, undefined, ac.signal)
       } catch (err) {
         if (myEpoch === searchEpoch) {
-          onPatch({ loading: false, error: err instanceof Error ? err : new Error(String(err)) })
+          onPatch({ loading: false, error: toError(err) })
         }
         return
       }
       if (result instanceof Promise) {
-        fetcherIsSync.set(fetcher, false)
+        fetcherIsSync.set(source.key, false)
         onPatch({ loading: true })
         result
-          .then((items) => {
+          .then((page) => {
             if (myEpoch !== searchEpoch) return
-            onPatch({ loading: false, results: items, error: null })
+            landed(page)
           })
           .catch((err: unknown) => {
             if (myEpoch !== searchEpoch) return
             if (ac.signal.aborted) return
-            onPatch({ loading: false, error: err instanceof Error ? err : new Error(String(err)) })
+            onPatch({ loading: false, error: toError(err) })
           })
       } else {
         // Sync fast path: write through immediately, no loading flicker.
-        fetcherIsSync.set(fetcher, true)
-        onPatch({ loading: false, results: result, error: null })
+        fetcherIsSync.set(source.key, true)
+        landed(result)
       }
     }
 
     // Unknown fetchers run immediately: that call tells us whether they
     // are sync. Only known-async fetchers are debounced.
-    if (debounceMs > 0 && fetcherIsSync.get(fetcher) === false) {
+    if (debounceMs > 0 && fetcherIsSync.get(source.key) === false) {
       debounceTimer = setTimeout(() => {
         debounceTimer = null
         if (myEpoch === searchEpoch) run()
       }, debounceMs)
     } else {
       run()
+    }
+  }
+
+  const loadMore: AsyncOrchestrator['loadMore'] = () => {
+    const p = paging
+    if (!p || loadingMore || p.epoch !== searchEpoch) return
+    loadingMore = true
+    const ac = new AbortController()
+    searchAbort = ac
+    const done = (page: SearchPageOf) => {
+      loadingMore = false
+      if (p.epoch !== searchEpoch || paging !== p) return
+      const seen = new Set(p.results.map((i) => i.id))
+      p.results = [...p.results, ...page.items.filter((i) => !seen.has(i.id))]
+      if (page.nextCursor === undefined) paging = null
+      else p.cursor = page.nextCursor
+      p.onPatch({ loading: false, results: p.results, error: null, hasMore: paging !== null })
+    }
+    const fail = (err: unknown) => {
+      loadingMore = false
+      if (p.epoch !== searchEpoch || ac.signal.aborted) return
+      // Keep the pages already shown; the next loadMore retries.
+      p.onPatch({ loading: false, error: toError(err) })
+    }
+    let result: Awaitable<SearchPageOf>
+    try {
+      result = p.fetch(p.query, p.cursor, ac.signal)
+    } catch (err) {
+      fail(err)
+      return
+    }
+    if (result instanceof Promise) {
+      p.onPatch({ loading: true })
+      result.then(done, fail)
+    } else {
+      done(result)
     }
   }
 
@@ -296,14 +381,31 @@ export const createAsyncOrchestrator = (
   const _peek: AsyncOrchestrator['_peek'] = (fieldKey, id) =>
     cache.get(fieldKey)?.get(id) ?? { status: 'pending' }
 
+  const seedLabels: AsyncOrchestrator['seedLabels'] = (fieldKey, items) => {
+    let bucket = cache.get(fieldKey)
+    if (!bucket) {
+      bucket = new Map()
+      cache.set(fieldKey, bucket)
+    }
+    for (const item of items) {
+      bucket.set(item.id, { status: 'resolved', label: item.label, meta: item.meta })
+      retryAt.get(fieldKey)?.delete(item.id)
+    }
+    bumpCache()
+  }
+
   const resetSearch: AsyncOrchestrator['resetSearch'] = () => {
     cancelSearch()
+    paging = null
+    loadingMore = false
     searchEpoch++
     lastFieldKey = null
   }
 
   const dispose: AsyncOrchestrator['dispose'] = () => {
     cancelSearch()
+    paging = null
+    loadingMore = false
     searchEpoch++
     lastFieldKey = null
     abortResolves()
@@ -312,5 +414,5 @@ export const createAsyncOrchestrator = (
     bumpCache()
   }
 
-  return { setQuery, resolveBatch, labelOf, invalidateLabels, resetSearch, dispose, _peek }
+  return { setQuery, loadMore, resolveBatch, seedLabels, labelOf, invalidateLabels, resetSearch, dispose, _peek }
 }

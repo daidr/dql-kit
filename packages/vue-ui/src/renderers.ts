@@ -1,4 +1,5 @@
 import {
+  DEFAULT_AST_LIMITS,
   MAX_PERIOD_OFFSET,
   PERIOD_UNITS,
   isPeriodValue,
@@ -13,9 +14,10 @@ import {
   filterInjectionKey,
   type LabelStatus,
   type RendererSet,
+  type UseFilterReturn,
 } from '@dql-kit/vue-headless'
-import { computed, defineComponent, h, inject, onMounted, ref, watch, type Component, type PropType } from 'vue'
-import { resolvePeriodLabel, resolveRelativeUnitLabel } from './i18n.ts'
+import { computed, defineComponent, h, inject, onMounted, ref, watch, type Component, type PropType, type VNode } from 'vue'
+import { resolveIdInputLabel, resolvePeriodLabel, resolveRelativeUnitLabel } from './i18n.ts'
 
 // `value` accepts any JSON-shaped condition value — string, number,
 // arrays, { amount, unit } objects for relative datetimes, etc. Using
@@ -751,6 +753,66 @@ const idDisplayText = (status: LabelStatus): string => {
   return `#${(status as { id: string | number }).id}`
 }
 
+// The suggestion list of the id inputs: recently picked ids while the
+// query is empty, otherwise the search results with a "load more" row
+// for paged fetchers. `null` when there is nothing to show.
+const idCandidates = (
+  filter: UseFilterReturn,
+  fieldKey: string,
+  exclude: readonly (string | number)[],
+  pick: (id: string | number) => void,
+): VNode | null => {
+  const slot = filter.search.value
+  if (slot.fieldKey !== fieldKey) return null
+  // mousedown fires before the input's blur, so picking works even
+  // though blur closes the list.
+  const option = (id: string | number, label: string, testid: string) =>
+    h('li', {
+      key: `${testid}${String(id)}`,
+      class: 'dql-id-result',
+      'data-testid': `${testid}${String(id)}`,
+      onMousedown: (e: Event) => {
+        e.preventDefault()
+        pick(id)
+      },
+    }, label)
+  if (slot.query === '') {
+    const recent = filter.recentIds(fieldKey).filter((id) => !exclude.includes(id))
+    if (recent.length > 0) {
+      return h('ul', { class: 'dql-id-results', 'data-testid': 'id-results' }, [
+        h('li', { class: 'dql-id-results-heading', role: 'presentation' }, resolveIdInputLabel('recent')),
+        ...recent.map((id) => option(id, idDisplayText(filter.labelOf(fieldKey, id)), 'id-recent-')),
+      ])
+    }
+  }
+  const items = slot.results.filter((item) => !exclude.includes(item.id))
+  if (items.length === 0 && !slot.hasMore) return null
+  return h('ul', { class: 'dql-id-results', 'data-testid': 'id-results' }, [
+    ...items.map((item) => option(item.id, item.label, 'id-result-')),
+    slot.hasMore
+      ? h('li', {
+          key: 'load-more',
+          class: 'dql-id-more',
+          'data-testid': 'id-load-more',
+          'aria-busy': slot.loading ? 'true' : undefined,
+          onMousedown: (e: Event) => {
+            e.preventDefault()
+            slot.loadMore()
+          },
+        }, resolveIdInputLabel('loadMore'))
+      : null,
+  ])
+}
+
+// Split pasted text into ids: commas, semicolons, whitespace and
+// newlines separate. `null` when the text has no separator, so a single
+// pasted word goes to the search box as usual.
+const splitPastedIds = (text: string): string[] | null => {
+  if (!/[,;\s]/.test(text.trim())) return null
+  const parts = text.split(/[,;\s]+/).map((x) => x.trim()).filter((x) => x !== '')
+  return parts.length > 1 ? [...new Set(parts)] : null
+}
+
 export const IdAutocompleteInput = defineComponent({
   name: 'DqlIdAutocompleteInput',
   props: baseProps,
@@ -790,6 +852,7 @@ export const IdAutocompleteInput = defineComponent({
 
     const select = (id: string | number) => {
       props.onUpdate(id)
+      filter.rememberIds(props.fieldKey, [id])
       open.value = false
       driveQuery('')
     }
@@ -846,30 +909,13 @@ export const IdAutocompleteInput = defineComponent({
                 },
                 onFocus: () => {
                   open.value = true
+                  // Claim the slot so recently picked ids show (and their
+                  // labels load) before anything is typed.
+                  if (!isOwnSlot.value && filter.recentIds(props.fieldKey).length > 0) driveQuery('')
                 },
               }),
-          open.value && isOwnSlot.value && filter.search.value.results.length > 0
-            ? h(
-                'ul',
-                { class: 'dql-id-results', 'data-testid': 'id-results' },
-                filter.search.value.results.map((item) =>
-                  h(
-                    'li',
-                    {
-                      key: String(item.id),
-                      class: 'dql-id-result',
-                      'data-testid': `id-result-${String(item.id)}`,
-                      // mousedown fires before the input's blur, so the
-                      // select handler runs even if we wire blur → close.
-                      onMousedown: (e: Event) => {
-                        e.preventDefault()
-                        select(item.id)
-                      },
-                    },
-                    item.label,
-                  ),
-                ),
-              )
+          open.value && props.value === undefined
+            ? idCandidates(filter, props.fieldKey, [], select)
             : null,
         ],
       )
@@ -913,7 +959,36 @@ export const IdMultiAutocompleteInput = defineComponent({
     const addId = (id: string | number) => {
       if (selected.value.includes(id)) return
       props.onUpdate([...selected.value, id])
+      filter.rememberIds(props.fieldKey, [id])
       driveQuery('')
+    }
+
+    // Bulk paste: look the ids up, add the ones found (up to the list
+    // limit) and list the rest.
+    const notFound = ref<string[]>([])
+    const truncated = ref(false)
+    const onPaste = async (e: ClipboardEvent) => {
+      const ids = splitPastedIds(e.clipboardData?.getData('text') ?? '')
+      if (!ids) return
+      e.preventDefault()
+      notFound.value = []
+      truncated.value = false
+      let found: (string | number)[]
+      try {
+        const res = await filter.lookupIds(props.fieldKey, ids)
+        found = res.found.map((item) => item.id)
+        notFound.value = res.missing
+      } catch {
+        notFound.value = ids
+        return
+      }
+      const fresh = found.filter((id) => !selected.value.includes(id))
+      const room = Math.max(0, DEFAULT_AST_LIMITS.maxListLength - selected.value.length)
+      if (fresh.length > room) truncated.value = true
+      const added = fresh.slice(0, room)
+      if (added.length === 0) return
+      props.onUpdate([...selected.value, ...added])
+      filter.rememberIds(props.fieldKey, added)
     }
 
     return () =>
@@ -971,30 +1046,19 @@ export const IdMultiAutocompleteInput = defineComponent({
             },
             onFocus: () => {
               open.value = true
+              if (!isOwnSlot.value && filter.recentIds(props.fieldKey).length > 0) driveQuery('')
             },
+            onPaste,
           }),
-          open.value && isOwnSlot.value && filter.search.value.results.length > 0
-            ? h(
-                'ul',
-                { class: 'dql-id-results', 'data-testid': 'id-results' },
-                filter.search.value.results
-                  .filter((item) => !selected.value.includes(item.id))
-                  .map((item) =>
-                    h(
-                      'li',
-                      {
-                        key: String(item.id),
-                        class: 'dql-id-result',
-                        'data-testid': `id-result-${String(item.id)}`,
-                        onMousedown: (e: Event) => {
-                          e.preventDefault()
-                          addId(item.id)
-                        },
-                      },
-                      item.label,
-                    ),
-                  ),
-              )
+          open.value ? idCandidates(filter, props.fieldKey, selected.value, addId) : null,
+          notFound.value.length > 0
+            ? h('div', { class: 'dql-id-notice', role: 'status', 'data-testid': 'id-not-found' }, [
+                `${resolveIdInputLabel('notFound')} ${notFound.value.join(', ')}`,
+              ])
+            : null,
+          truncated.value
+            ? h('div', { class: 'dql-id-notice', role: 'status', 'data-testid': 'id-truncated' },
+                resolveIdInputLabel('truncated'))
             : null,
         ],
       )

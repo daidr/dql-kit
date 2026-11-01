@@ -48,3 +48,21 @@ export const resolvePeriodLabel = (key: keyof PeriodLabels | string): string => 
   if (l === undefined) return key
   return typeof l === 'function' ? (l as () => string)() : (l as string)
 }
+
+const ID_INPUT_DEFAULTS = {
+  recent: 'Recent',
+  loadMore: 'Load more',
+  notFound: 'Not found:',
+  truncated: 'List limit reached; the remaining ids were left out.',
+} as const
+
+/**
+ * Resolve a text of the id inputs (see `IdInputLabels`), falling back
+ * to English. Apps register texts via `createDqlKit({ idInputLabels })`.
+ */
+export const resolveIdInputLabel = (key: keyof typeof ID_INPUT_DEFAULTS): string => {
+  const state = useState()
+  const l = (state?.idInputLabels as Record<string, unknown> | undefined)?.[key]
+  if (l === undefined) return ID_INPUT_DEFAULTS[key]
+  return typeof l === 'function' ? (l as () => string)() : (l as string)
+}

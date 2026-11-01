@@ -824,6 +824,29 @@
 .dql-id-result:hover {
   background: var(--dql-surface-soft);
 }
+.dql-id-results-heading {
+  padding: 4px 12px 2px;
+  font-size: var(--dql-font-size-xs, 12px);
+  color: var(--dql-text-faint);
+  cursor: default;
+}
+.dql-id-more {
+  padding: 6px 12px;
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-accent);
+  cursor: pointer;
+}
+.dql-id-more:hover {
+  background: var(--dql-surface-soft);
+}
+.dql-id-more[aria-busy='true'] {
+  opacity: 0.6;
+}
+.dql-id-notice {
+  flex-basis: 100%;
+  font-size: var(--dql-font-size-xs, 12px);
+  color: var(--dql-warn);
+}
 
 /* Filter chips */
 .dql-chips {

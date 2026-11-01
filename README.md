@@ -113,6 +113,16 @@ const filter = useFilter({
 // filter.describe(ast?)  — human-readable summary (default: committedValid)
 ```
 
+**Id fields.** A fetcher may give `searchPage(query, cursor, signal)` instead
+of (or besides) `search`, returning `{ items, nextCursor? }`. The first page gets
+`cursor: undefined`. Then `filter.search` has `hasMore` and `loadMore()`, and
+the built-in id inputs show a "Load more" row. Picked ids are kept per field
+(`recentIds: { limit: 8, persist: 'session' }`) and offered while the search
+box is empty. Pasting a list (commas, semicolons, spaces or new lines) into the
+multi-id input looks the ids up through `resolve`, which gets them as strings.
+The ids it returns are added, up to the list limit, and the rest are listed as
+not found. Texts are set with `createDqlKit({ idInputLabels })`.
+
 **Field groups.** Give fields a `group` and declare `groups: { key: { label,
 order } }` on the schema; `<FilterPanel>` then shows one `<optgroup>` per group
 (ungrouped fields last, no headings when there is only one group).

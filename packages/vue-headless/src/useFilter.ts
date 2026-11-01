@@ -14,6 +14,7 @@ import {
   type DroppedNode,
   type FilterSchema,
   type IdFetcher,
+  type Item,
   type ValidAST,
   type ValidNode,
   type ValidationError,
@@ -41,6 +42,7 @@ import type {
   FetcherMap,
   FetcherMapFor,
   FilterActions,
+  IdLookup,
   SearchSlot,
   UseFilterOptions,
   UseFilterReturn,
@@ -74,6 +76,7 @@ const navigateParent = (
 // sessionStorage key prefix. queryKey is appended so two filters on one page
 // get disjoint storage entries the same way they get disjoint URL keys.
 const PERSIST_KEY_PREFIX = 'dql-kit:draft:'
+const RECENT_KEY_PREFIX = 'dql-kit:recent:'
 
 const getSessionStorage = (): Storage | null => {
   try {
@@ -293,6 +296,59 @@ export const useFilter = <S extends FilterSchema>(
 
   const debounceMs = opts.debounceMs ?? 250
 
+  // ---- recently picked ids ---------------------------------------------
+  const recentLimit = Math.max(0, Math.floor(opts.recentIds?.limit ?? 8))
+  const recentKey = RECENT_KEY_PREFIX + queryKey
+  const recentStorage = opts.recentIds?.persist === 'session' ? getSessionStorage() : null
+  const readRecent = (): Record<string, (string | number)[]> => {
+    if (!recentStorage) return {}
+    try {
+      const parsed = JSON.parse(recentStorage.getItem(recentKey) ?? '{}') as unknown
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+      const out: Record<string, (string | number)[]> = {}
+      for (const [k, v] of Object.entries(parsed)) {
+        if (Array.isArray(v)) {
+          out[k] = v.filter((x): x is string | number => typeof x === 'string' || typeof x === 'number')
+            .slice(0, recentLimit)
+        }
+      }
+      return out
+    } catch {
+      return {}
+    }
+  }
+  const recent = ref<Record<string, (string | number)[]>>(readRecent())
+  const recentIds = (fieldKey: string): (string | number)[] =>
+    Object.prototype.hasOwnProperty.call(recent.value, fieldKey) ? recent.value[fieldKey]! : []
+  const rememberIds = (fieldKey: string, ids: (string | number)[]): void => {
+    if (recentLimit === 0 || ids.length === 0) return
+    const fresh = [...new Set(ids)].reverse()
+    const next = [...fresh, ...recentIds(fieldKey).filter((x) => !fresh.includes(x))].slice(0, recentLimit)
+    recent.value = { ...recent.value, [fieldKey]: next }
+    try {
+      recentStorage?.setItem(recentKey, JSON.stringify(recent.value))
+    } catch {
+      /* quota / disabled — memory only */
+    }
+  }
+
+  const lookupIds = async (fieldKey: string, rawIds: string[]): Promise<IdLookup> => {
+    const wanted = [...new Set(rawIds.map((x) => x.trim()).filter((x) => x !== ''))]
+    const fetcher = fetcherFor(fieldKey)
+    if (!fetcher || wanted.length === 0) return { found: [], missing: wanted }
+    const items = await fetcher.resolve(wanted as never, new AbortController().signal)
+    const byKey = new Map(items.map((item) => [String(item.id), item]))
+    const found: Item[] = []
+    const missing: string[] = []
+    for (const raw of wanted) {
+      const item = byKey.get(raw)
+      if (item) found.push(item)
+      else missing.push(raw)
+    }
+    orchestrator.seedLabels(fieldKey, found)
+    return { found, missing }
+  }
+
   // Wrap all reactive work in a detached effect scope. We bind the
   // scope-stop hook to the *parent* scope (the host component) only if
   // one is active — otherwise the consumer is on their own for
@@ -309,10 +365,16 @@ export const useFilter = <S extends FilterSchema>(
     if (!fieldDef || fieldDef.typeId !== 'id') return
     const fetcher = fetcherFor(fieldKey)
     if (!fetcher) return
+    // Recently picked ids are offered for an empty query; make sure
+    // their labels are on the way.
+    if (query === '') {
+      const recent = recentIds(fieldKey)
+      if (recent.length > 0) orchestrator.resolveBatch(fieldKey, recent, fetcher.resolve as never)
+    }
     orchestrator.setQuery(
       fieldKey,
       query,
-      fetcher.search,
+      fetcher as never,
       debounceMs,
       (patch) => {
         // Spread preserves the slot's `setQuery` member across updates.
@@ -327,8 +389,10 @@ export const useFilter = <S extends FilterSchema>(
     loading: false,
     error: null,
     results: [],
+    hasMore: false,
     setQuery: setSearchQuery,
-  } as SearchSlotState & { setQuery: (k: string, q: string) => void })
+    loadMore: () => orchestrator.loadMore(),
+  } as SearchSlotState & Pick<SearchSlot, 'setQuery' | 'loadMore'>)
 
   // Single analysis pass produces both the pruned ValidAST and the per-
   // node ValidationErrors — replaces the old `prune` + `validate` double
@@ -631,7 +695,9 @@ export const useFilter = <S extends FilterSchema>(
       }
       if (search.value.fieldKey !== null && !hasOwn(next.fields, search.value.fieldKey)) {
         orchestrator.resetSearch()
-        search.value = { ...search.value, fieldKey: null, query: '', loading: false, error: null, results: [] }
+        search.value = {
+          ...search.value, fieldKey: null, query: '', loading: false, error: null, results: [], hasMore: false,
+        }
       }
       const nextDraft = cloneDraft(toRaw(draft.value))
       if (reconcileDraft(nextDraft, next)) draft.value = nextDraft
@@ -719,6 +785,9 @@ export const useFilter = <S extends FilterSchema>(
     applyAst,
     toJSON: toJSON as () => ValidAST<S>,
     invalidateLabels,
+    recentIds,
+    rememberIds,
+    lookupIds,
     fieldGroups,
     describe(ast) {
       const s = schemaRef.value
