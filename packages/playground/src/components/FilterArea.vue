@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FilterButton, FilterPanel } from '@dql-kit/vue-ui'
+import { FilterButton, FilterChips, FilterPanel } from '@dql-kit/vue-ui'
 import { computed } from 'vue'
 import { usePlaygroundStore } from '../store.ts'
 
@@ -53,6 +53,10 @@ const onDiscard = () => filter.value.discard()
       </div>
     </header>
 
+    <div v-if="filter.committedValid.value.children.length > 0" class="filter-area__chips">
+      <FilterChips :filter="filter" remove-label="移除" />
+    </div>
+
     <div class="filter-area__body">
       <FilterPanel :filter="filter" />
     </div>
@@ -77,6 +81,9 @@ const onDiscard = () => filter.value.discard()
 </template>
 
 <style scoped>
+.filter-area__chips {
+  padding: 8px 16px 0;
+}
 .filter-area {
   display: flex;
   flex-direction: column;

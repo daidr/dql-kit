@@ -60,3 +60,5 @@ export type {
   UseFilterOptions,
   UseFilterReturn,
 } from './types.ts'
+export { groupFields, type FieldGroup, type FieldGroupEntry } from './fieldGroups.ts'
+export { describeWithLabels } from './describe.ts'

@@ -20,7 +20,9 @@ import {
 import {
   computed,
   effectScope,
+  getCurrentInstance,
   getCurrentScope,
+  inject,
   isRef,
   onScopeDispose,
   ref,
@@ -30,6 +32,9 @@ import {
   type Ref,
 } from 'vue'
 import { createAsyncOrchestrator, type SearchSlotState } from './asyncOrchestrator.ts'
+import { describeWithLabels } from './describe.ts'
+import { groupFields } from './fieldGroups.ts'
+import { dqlKitInjectionKey } from './plugin.ts'
 import type {
   CommitMode,
   FetcherMap,
@@ -136,6 +141,15 @@ export const useFilter = <S extends FilterSchema>(
       ? (opts.schema.value as S | undefined)
       : (opts.schema as S | undefined),
   )
+
+  // Plugin labels for `describe()`. Only reachable when useFilter runs
+  // inside a component's setup; elsewhere the defaults apply.
+  const kitState = getCurrentInstance() ? inject(dqlKitInjectionKey, null) : null
+
+  const fieldGroups = computed(() => {
+    const s = schemaRef.value
+    return s ? groupFields(s) : []
+  })
 
   const dropped: Ref<DroppedNode[]> = ref([])
 
@@ -464,6 +478,9 @@ export const useFilter = <S extends FilterSchema>(
   }
 
   const applyAst = (ast: ValidAST): void => {
+    // `toRaw`: callers may pass a reactive AST (e.g. `committedValid.value`),
+    // which structuredClone can't copy.
+    ast = toRaw(ast)
     draft.value = cloneDraft(ast) as DraftAST
     // applyAst is the "set the entire filter state" call. In 'manual'
     // mode treat it as an implicit commit so URL / persistDraft reflect
@@ -621,5 +638,12 @@ export const useFilter = <S extends FilterSchema>(
     applyAst,
     toJSON: toJSON as () => ValidAST<S>,
     invalidateLabels,
+    fieldGroups,
+    describe(ast) {
+      const s = schemaRef.value
+      const target = (ast ?? committedValid.value) as ValidAST
+      if (!s) return { kind: 'group', path: [], combinator: target.combinator, children: [], text: '' }
+      return describeWithLabels(target, s, kitState, labelOf)
+    },
   }
 }

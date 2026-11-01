@@ -1,4 +1,5 @@
 import type {
+  DescribedGroup,
   DraftAST,
   DraftNode,
   DroppedNode,
@@ -12,6 +13,7 @@ import type {
 } from '@dql-kit/core'
 import type { Component } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
+import type { FieldGroup } from './fieldGroups.ts'
 import type { UrlAdapter } from './urlAdapter.ts'
 
 /**
@@ -176,6 +178,18 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   applyAst(ast: ValidAST<S>): void
   toJSON: () => ValidAST<S>
   invalidateLabels: (fieldKey?: string) => void
+  /**
+   * The schema's fields in their `groups`, sorted by `order`, with
+   * ungrouped fields last (`key: null`). For field pickers.
+   */
+  fieldGroups: ComputedRef<FieldGroup[]>
+  /**
+   * Human-readable description of `ast` (default: `committedValid`):
+   * `describeAst` with the plugin's op / unit / period labels and id
+   * labels from `labelOf`. Reactive when read inside a render or
+   * computed.
+   */
+  describe(ast?: ValidAST<S>): DescribedGroup
 }
 
 export type FieldRendererProps = {

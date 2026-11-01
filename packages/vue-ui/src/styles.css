@@ -11,7 +11,8 @@
  */
 
 .dql-filter-panel,
-.dql-filter-button {
+.dql-filter-button,
+.dql-chips {
   --dql-radius-sm: 6px;
   --dql-radius-md: 8px;
   --dql-radius-lg: 12px;
@@ -61,7 +62,8 @@
 
 @media (prefers-color-scheme: dark) {
   .dql-filter-panel,
-.dql-filter-button {
+.dql-filter-button,
+.dql-chips {
     --dql-border: #2a2f3b;
     --dql-border-strong: #353b4a;
     --dql-border-soft: #1a1d24;
@@ -575,6 +577,33 @@
   font-size: var(--dql-font-size-xs);
 }
 
+/* Calendar period (inPeriod) */
+.dql-input--period {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dql-period-offset,
+.dql-period-unit,
+.dql-period-amount {
+  height: var(--dql-control-h);
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--dql-font-size-sm);
+  background: var(--dql-surface);
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  outline: none;
+}
+.dql-period-amount {
+  width: 72px;
+}
+.dql-period-offset:hover,
+.dql-period-unit:hover,
+.dql-period-amount:focus {
+  border-color: var(--dql-border-strong);
+}
+
 /* Relative-time (datetime + inLast) */
 .dql-input--in-last {
   display: flex;
@@ -792,4 +821,61 @@
 }
 .dql-id-result:hover {
   background: var(--dql-surface-soft);
+}
+
+/* Filter chips */
+.dql-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-text);
+}
+.dql-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: var(--dql-control-h);
+  padding: 0 4px 0 10px;
+  background: var(--dql-surface-soft);
+  border: 1px solid var(--dql-border);
+  border-radius: 999px;
+}
+.dql-chip--group {
+  border-style: dashed;
+}
+.dql-chip--loading .dql-chip-text {
+  color: var(--dql-text-muted);
+}
+.dql-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dql-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font: inherit;
+  line-height: 1;
+  color: var(--dql-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.dql-chip-remove:hover,
+.dql-chip-remove:focus-visible {
+  color: var(--dql-text);
+  background: var(--dql-border-soft);
+  outline: none;
+}
+.dql-chip-separator {
+  font-size: var(--dql-font-size-xs);
+  color: var(--dql-text-faint);
 }

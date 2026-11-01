@@ -17,7 +17,7 @@
 | [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` —— 把 `toJsonSchema` 的结果转成 TypeBox schema，例如用作 Elysia 路由的 body。 |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` 组合式函数 + `createDqlKit` Vue 插件。通过 `UrlAdapter` 实现可插拔的 URL 同步（此处不引入 `vue-router`）。 |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` —— 面向 vue-router 应用的 `UrlAdapter`。 |
-| [`@dql-kit/vue-ui`](./packages/vue-ui) | 参考实现 `<FilterPanel>` / `<FilterButton>` + 内置输入渲染器。可选 —— 应用通常会基于 `useFilter` 自行封装组件。 |
+| [`@dql-kit/vue-ui`](./packages/vue-ui) | 参考实现 `<FilterPanel>` / `<FilterButton>` / `<FilterChips>` + 内置输入渲染器。可选 —— 应用通常会基于 `useFilter` 自行封装组件。 |
 
 ## 架构
 
@@ -109,7 +109,20 @@ const filter = useFilter({
 // filter.dropped         —— 读取 URL 时被丢弃的节点及原因
 // filter.search.setQuery(fieldKey, q) —— 驱动 id 自动补全
 // filter.actions.{addCondition, updateNode, removeNode, clear, ...}
+// filter.fieldGroups     —— 按 schema 的 `groups` 分组的字段，供字段选择器使用
+// filter.describe(ast?)  —— 可读的筛选摘要（默认描述 committedValid）
 ```
+
+**字段分组。** 给字段设置 `group`，并在 schema 上声明 `groups: { key: { label,
+order } }`，`<FilterPanel>` 就会为每个分组渲染一个 `<optgroup>`（未分组的字段排在
+最后；只有一个分组时不显示分组标题）。
+
+**摘要与筛选标签。** core 的 `describeAst(ast, schema)` 返回与 AST 结构一致的树，
+包含字段 / op 标签、拆分后的值，以及类似 `Status in Draft, Published AND (Rating gt 3 OR …)`
+的 `text`；它不依赖 UI，可用于审计日志等场景。`filter.describe()` 在此基础上使用
+插件提供的 op、单位、周期标签，以及通过 fetcher 解析的 id 标签（解析中为
+`status: 'loading'`）。vue-ui 的 `<FilterChips :filter="filter">` 把已提交的根级条件
+显示为可删除的标签，删除后立即应用去掉该条件的筛选。
 
 ### 4. 在后端将 AST 翻译为 SQL
 

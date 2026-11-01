@@ -17,7 +17,7 @@ Type-safe, schema-driven filter / query AST library for dashboards.
 | [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` — the `toJsonSchema` output as a TypeBox schema, e.g. for an Elysia route body. |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` composable + `createDqlKit` Vue plugin. Pluggable URL sync via `UrlAdapter` (`vue-router` not imported here). |
 | [`@dql-kit/vue-router-sync`](./packages/vue-router-sync) | `vueRouterUrlAdapter()` — `UrlAdapter` for vue-router apps. |
-| [`@dql-kit/vue-ui`](./packages/vue-ui) | Reference `<FilterPanel>` / `<FilterButton>` + built-in input renderers. Optional — apps usually wrap `useFilter` in their own components. |
+| [`@dql-kit/vue-ui`](./packages/vue-ui) | Reference `<FilterPanel>` / `<FilterButton>` / `<FilterChips>` + built-in input renderers. Optional — apps usually wrap `useFilter` in their own components. |
 
 ## Architecture
 
@@ -109,7 +109,22 @@ const filter = useFilter({
 // filter.dropped         — Nodes dropped while reading the URL, with the reason
 // filter.search.setQuery(fieldKey, q) — drive id autocomplete
 // filter.actions.{addCondition, updateNode, removeNode, clear, ...}
+// filter.fieldGroups     — fields in the schema's `groups`, for a field picker
+// filter.describe(ast?)  — human-readable summary (default: committedValid)
 ```
+
+**Field groups.** Give fields a `group` and declare `groups: { key: { label,
+order } }` on the schema; `<FilterPanel>` then shows one `<optgroup>` per group
+(ungrouped fields last, no headings when there is only one group).
+
+**Summaries and chips.** `describeAst(ast, schema)` from core returns a tree
+mirroring the AST with field / op labels, the values split into parts, and a
+`text` such as `Status in Draft, Published AND (Rating gt 3 OR …)`; it runs
+anywhere, e.g. for audit logs. `filter.describe()` adds the plugin's op, unit
+and period labels and id labels from the fetchers (`status: 'loading'` while
+one is resolving). `<FilterChips :filter="filter">` from vue-ui lists the
+committed root-level conditions as removable chips; removing one applies the
+filter without it.
 
 ### 4. Translate AST to SQL on the backend
 

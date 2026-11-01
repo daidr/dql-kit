@@ -1708,3 +1708,44 @@ describe('FilterPanel — calendar period input', () => {
     wrapper.unmount()
   })
 })
+
+describe('FilterPanel — grouped field picker', () => {
+  it('renders one optgroup per schema group, ungrouped fields after them', () => {
+    const s = defineFilterSchema({
+      groups: { content: { label: 'Content', order: 1 }, people: { label: 'People', order: 2 } },
+      fields: {
+        author: f.string({ group: 'people' }),
+        title: f.string({ group: 'content' }),
+        misc: f.string(),
+      },
+    })
+    const filter = useFilter({
+      schema: s,
+      sync: 'none',
+      initial: { combinator: 'and', children: [{ field: 'title', op: 'eq', value: 'x' }] },
+    })
+    const wrapper = mount(FilterPanel, { props: { filter } })
+    const groups = wrapper.findAll('[data-testid="field-select"] optgroup')
+    expect(groups.map((g) => g.attributes('label'))).toEqual(['Content', 'People'])
+    expect(groups[0]!.findAll('option').map((o) => o.attributes('value'))).toEqual(['title'])
+    const options = wrapper.findAll('[data-testid="field-select"] > option').map((o) => o.attributes('value'))
+    expect(options).toEqual(['', 'misc'])
+    wrapper.unmount()
+  })
+
+  it('stays flat with a single group', () => {
+    const s = defineFilterSchema({
+      groups: { only: { label: 'Only' } },
+      fields: { a: f.string({ group: 'only' }), b: f.string({ group: 'only' }) },
+    })
+    const filter = useFilter({
+      schema: s,
+      sync: 'none',
+      initial: { combinator: 'and', children: [{ field: 'a', op: 'eq', value: 'x' }] },
+    })
+    const wrapper = mount(FilterPanel, { props: { filter } })
+    expect(wrapper.findAll('[data-testid="field-select"] optgroup')).toHaveLength(0)
+    expect(wrapper.findAll('[data-testid="field-select"] option')).toHaveLength(3)
+    wrapper.unmount()
+  })
+})
