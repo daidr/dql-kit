@@ -131,8 +131,9 @@ export const drizzleOps: Record<string, OpTranslator> = {
   // PG: array @> array — left contains every element of right (superset).
   // Use drizzle's arrayContains helper rather than inlining `@>` so the
   // parameter is encoded as a PG ARRAY literal instead of a record/tuple.
-  // The helper rejects an empty array; emit a tautology to preserve PG's
-  // semantics (`x @> '{}'` is always true).
+  // The helper rejects an empty array. `parseAst` already refuses empty
+  // lists, so this only guards ASTs that were cast to `CheckedAST`; emit
+  // PG's own answer (`x @> '{}'` is always true) instead of throwing.
   containsAll:  (col, v) => {
     const arr = (v as unknown[]) ?? []
     if (arr.length === 0) return sql`true`

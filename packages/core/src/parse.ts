@@ -1,4 +1,5 @@
 import {
+  checkPairOrder,
   checkShape,
   checkValueType,
   expectedTypeLabel,
@@ -140,6 +141,13 @@ const walkCondition = (
     errors.push({ path, code: 'value_shape_mismatch', op: opName, expected: op.valueShape })
     return null
   }
+  // An empty list is the "nothing picked yet" state of a multi-select:
+  // `in []` would match no rows and `notIn []` every row, so treat it
+  // as a missing value rather than a real condition.
+  if (op.valueShape === 'list' && (value as unknown[]).length === 0) {
+    errors.push({ path, code: 'incomplete', missing: 'value' })
+    return null
+  }
   if (
     st.limits
     && op.valueShape === 'list'
@@ -160,6 +168,10 @@ const walkCondition = (
       expected: expectedTypeLabel(field),
       got: observedTypeLabel(value),
     })
+    return null
+  }
+  if (op.valueShape === 'pair' && !checkPairOrder(field, value)) {
+    errors.push({ path, code: 'invalid_range', op: opName })
     return null
   }
   return { field: fieldName, op: opName, value: copyValue(value) }

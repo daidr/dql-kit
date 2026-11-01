@@ -31,6 +31,7 @@ const isValidationError = (e: ParseError): e is ValidationError =>
   || e.code === 'value_type_mismatch'
   || e.code === 'value_shape_mismatch'
   || e.code === 'incomplete'
+  || e.code === 'invalid_range'
 
 /**
  * Single-walk analyzer: produces both the pruned ValidAST and the list

@@ -138,14 +138,14 @@ describe('fromUrl', () => {
     expect(result.dropped).toEqual([])
   })
 
-  test('round-trip lossless on string in with empty array', () => {
+  test('string in with an empty array is dropped as incomplete', () => {
     const ast: ValidAST = {
       combinator: 'and',
       children: [{ field: 'title', op: 'in', value: [] }],
     }
     const result = fromUrl(toUrl(ast), schema)
-    expect(result.ast).toEqual(ast)
-    expect(result.dropped).toEqual([])
+    expect(result.ast).toEqual({ combinator: 'and', children: [] })
+    expect(result.dropped).toEqual([{ path: [0], code: 'incomplete', missing: 'value' }])
   })
 
   test('string in with non-array v is dropped (value_shape_mismatch)', () => {

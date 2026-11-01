@@ -252,7 +252,7 @@ viewer's local midnight. Map `date` fields to `date` columns, or use
   100` (`list`-shaped values). Depth is checked before descending, so the
   recursion is bounded and a hostile 20 000-deep payload fails cleanly instead
   of overflowing the stack.
-- **(e)** ValidationError shape — 5 codes:
+- **(e)** ValidationError shape — 6 codes:
 
   ```ts
   type ValidationError =
@@ -261,7 +261,22 @@ viewer's local midnight. Map `date` fields to `date` columns, or use
     | { path: number[], code: 'value_type_mismatch',  expected: string, got: string }
     | { path: number[], code: 'value_shape_mismatch', op: string, expected: ValueShape }
     | { path: number[], code: 'incomplete',           missing: 'field' | 'op' | 'value' }
+    | { path: number[], code: 'invalid_range',        op: string }
   ```
+
+  Value rules behind these codes:
+  - An empty `list` value (`in: []`, `notIn: []`, `containsAll: []`) is
+    `incomplete` / `missing: 'value'`: it is what a multi-select holds before
+    anything is picked, and as SQL it would match no rows (`in`) or every row
+    (`notIn`).
+  - A `pair` value whose lower bound is greater than its upper bound is
+    `invalid_range` (number, `date`, `datetime`; equal bounds are fine). It is
+    reported, not swapped, so the URL and the UI never disagree with the AST.
+    `datetime` bounds compare as instants.
+  - `date` is `YYYY-MM-DD` and must be a real calendar day (`2024-02-31` is
+    rejected). `datetime` is ISO 8601 with seconds optional and an explicit
+    `Z` or `±HH:MM` offset; a value without one would be read in the runtime's
+    local zone, so browser and server could disagree on the instant.
 
   `parseAst` and `fromUrl` report `ParseError`, which is `ValidationError`
   plus four codes only untrusted input can produce: `invalid_node` (not a

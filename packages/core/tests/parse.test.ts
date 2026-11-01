@@ -201,6 +201,89 @@ describe('parseAst', () => {
   })
 })
 
+describe('value checks', () => {
+  const one = (cond: Record<string, unknown>) =>
+    parseAst({ combinator: 'and', children: [cond] }, schema)
+
+  test.each([
+    ['in', 'status'],
+    ['notIn', 'status'],
+    ['containsAll', 'tags'],
+  ])('%s with an empty list is incomplete', (op, field) => {
+    expect(errorsOf(one({ field, op, value: [] }))).toEqual([
+      { path: [0], code: 'incomplete', missing: 'value' },
+    ])
+  })
+
+  test('between rejects reversed bounds and accepts equal ones', () => {
+    expect(errorsOf(one({ field: 'viewsCount', op: 'between', value: [10, 1] }))).toEqual([
+      { path: [0], code: 'invalid_range', op: 'between' },
+    ])
+    expect(one({ field: 'viewsCount', op: 'between', value: [3, 3] }).ok).toBe(true)
+  })
+
+  test('datetime between compares instants, not strings', () => {
+    // 10:00+08:00 is 02:00Z, so this range is in order even though the
+    // strings sort the other way.
+    expect(
+      one({ field: 'occurredAt', op: 'between', value: ['2024-01-01T10:00:00+08:00', '2024-01-01T03:00:00Z'] }).ok,
+    ).toBe(true)
+    expect(
+      errorsOf(one({ field: 'occurredAt', op: 'between', value: ['2024-01-02T00:00:00Z', '2024-01-01T00:00:00Z'] })),
+    ).toEqual([{ path: [0], code: 'invalid_range', op: 'between' }])
+  })
+
+  test.each([
+    '2024-01-01T00:00:00Z',
+    '2024-01-01T00:00Z',
+    '2024-01-01T00:00:00.123Z',
+    '2024-01-01T08:00:00+08:00',
+    '2024-02-29T23:59:59-05:30',
+  ])('datetime accepts %s', (value) => {
+    expect(one({ field: 'occurredAt', op: 'before', value }).ok).toBe(true)
+  })
+
+  test.each([
+    '2024',
+    'Jan 1 2024',
+    '2024-01-01',
+    '2024-01-01T00:00:00',
+    '2024-01-01 00:00:00Z',
+    '2023-02-29T00:00:00Z',
+    '2024-01-01T24:00:00Z',
+    '2024-01-01T12:60:00Z',
+  ])('datetime rejects %s', (value) => {
+    expect(errorsOf(one({ field: 'occurredAt', op: 'before', value }))).toEqual([
+      { path: [0], code: 'value_type_mismatch', expected: 'datetime', got: 'string' },
+    ])
+  })
+})
+
+describe('date values', () => {
+  const dateSchema = defineFilterSchema({ fields: { day: f.date() } })
+  const one = (value: unknown, op = 'eq') =>
+    parseAst({ combinator: 'and', children: [{ field: 'day', op, value }] }, dateSchema)
+
+  test.each(['2024-02-29', '2023-12-31'])('accepts %s', (value) => {
+    expect(one(value).ok).toBe(true)
+  })
+
+  test.each(['2023-02-29', '2024-02-31', '2024-13-01', '2024-00-10', '2024-01-00'])(
+    'rejects %s',
+    (value) => {
+      expect(errorsOf(one(value))).toEqual([
+        { path: [0], code: 'value_type_mismatch', expected: 'date', got: 'string' },
+      ])
+    },
+  )
+
+  test('between rejects reversed days', () => {
+    expect(errorsOf(one(['2024-02-01', '2024-01-31'], 'between'))).toEqual([
+      { path: [0], code: 'invalid_range', op: 'between' },
+    ])
+  })
+})
+
 describe('entry points agree', () => {
   // The same input through analyze (draft), parseAst (request body) and
   // fromUrl (link) must keep and reject the same nodes.
@@ -212,6 +295,9 @@ describe('entry points agree', () => {
     ['stray value on none op', { field: 'title', op: 'isEmpty', value: 'x' }],
     ['missing value', { field: 'title', op: 'eq' }],
     ['bad shape', { field: 'viewsCount', op: 'between', value: [1] }],
+    ['empty list', { field: 'status', op: 'in', value: [] }],
+    ['reversed range', { field: 'viewsCount', op: 'between', value: [10, 1] }],
+    ['datetime without offset', { field: 'occurredAt', op: 'before', value: '2024-01-01T00:00:00' }],
   ]
 
   const toCompact = (n: Record<string, unknown>) => {
