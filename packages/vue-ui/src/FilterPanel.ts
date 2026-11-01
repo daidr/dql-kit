@@ -102,11 +102,21 @@ export const FilterPanel = defineComponent({
     const schema = computed(() => props.filter.schema.value)
     const draft = computed(() => props.filter.draft.value)
 
-    const fieldOptions = computed(() => {
-      const s = schema.value
-      if (!s) return [] as Array<{ key: string, def: FieldDef }>
-      return Object.entries(s.fields).map(([key, def]) => ({ key, def }))
-    })
+    const fieldOption = ({ key, def }: { key: string, def: FieldDef }) =>
+      h('option', { value: key }, resolveLabel(def.label, key))
+
+    // One <optgroup> per schema group; with a single group (or none
+    // declared) the list stays flat. Ungrouped fields follow the groups
+    // as plain options.
+    const fieldOptions = (): VNode[] => {
+      const groups = props.filter.fieldGroups.value
+      if (groups.length <= 1) return groups.flatMap((g) => g.fields.map(fieldOption))
+      return groups.flatMap((g) =>
+        g.key === null
+          ? g.fields.map(fieldOption)
+          : [h('optgroup', { label: resolveLabel(g.label, g.key), 'data-testid': `field-group-${g.key}` }, g.fields.map(fieldOption))],
+      )
+    }
 
     const errors = computed(() => props.filter.errors.value)
 
@@ -131,9 +141,7 @@ export const FilterPanel = defineComponent({
         },
         [
           h('option', { value: '' }, '— field —'),
-          ...fieldOptions.value.map(({ key, def }) =>
-            h('option', { value: key }, resolveLabel(def.label, key)),
-          ),
+          ...fieldOptions(),
         ],
       )
 

@@ -66,3 +66,15 @@ export {
   type WeekStart,
 } from './period.ts'
 export { resolveTimeZone, startOfZonedDay, zonedDayNumber } from './zone.ts'
+export {
+  defaultValueText,
+  describeAst,
+  type DescribeContext,
+  type DescribeOptions,
+  type DescribedCondition,
+  type DescribedGroup,
+  type DescribedNode,
+  type RawValuePart,
+  type ValuePart,
+  type ValuePartStatus,
+} from './describe.ts'
