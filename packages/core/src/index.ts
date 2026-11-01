@@ -38,3 +38,11 @@ export {
   type JsonSchema,
   type JsonSchemaObject,
 } from './json-schema.ts'
+export {
+  builtinMatchers,
+  createMatcher,
+  type CreateMatcherOptions,
+  type MatchContext,
+  type Matcher,
+  type OpMatcher,
+} from './evaluate.ts'

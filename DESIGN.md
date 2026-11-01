@@ -30,6 +30,7 @@ Three pillars:
    ├── ast/                types, analyze, prune, validate, astEqual
    ├── parse/              parseAst + limits: the one walker behind analyze / fromUrl
    ├── url/                toUrl, fromUrl, version sniffer
+   ├── evaluate/           createMatcher: in-memory evaluation, same op semantics as SQL
    └── ops/                op metadata registry (no implementations)
 
 @dql-kit/drizzle-pg        ──► peerDeps: @dql-kit/core, drizzle-orm   (PostgreSQL only)
@@ -207,8 +208,11 @@ viewer's; use `datetime` with explicit instants when the local day matters.
 
 ### Op semantics
 
-What every built-in op means, independent of dialect. Adapters (and any
-future in-memory evaluator) must agree with this table; tests assert it.
+What every built-in op means, independent of dialect. Adapters and the
+in-memory evaluator (`createMatcher`) must agree with this table:
+`packages/core/tests/semantics/cases.ts` encodes it as data, and both core
+(against `createMatcher`) and drizzle-pg (against PostgreSQL) run it. Add
+cases there before adding an op.
 "Empty" means NULL for scalar columns; for strings also `''`; for arrays
 also zero length.
 

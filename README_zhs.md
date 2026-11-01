@@ -12,7 +12,7 @@
 
 | Package | 描述 |
 |---|---|
-| [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、解析不可信输入的 `parseAst`、生成请求体校验的 `toJsonSchema`、URL 序列化。零 ORM / 框架 / i18n 依赖。 |
+| [`@dql-kit/core`](./packages/core) | Schema 构建器（`f.*`）、AST 类型、`analyze` / `prune` / `validate`、解析不可信输入的 `parseAst`、生成请求体校验的 `toJsonSchema`、URL 序列化、内存过滤用的 `createMatcher`。零 ORM / 框架 / i18n 依赖。 |
 | [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM 翻译器，**仅支持 PostgreSQL**。解析后的 AST → `SQL` WHERE 片段。自定义 op 在构造时传入；不存在会变更状态的 `registerOp`。 |
 | [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` —— 把 `toJsonSchema` 的结果转成 TypeBox schema，例如用作 Elysia 路由的 body。 |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` 组合式函数 + `createDqlKit` Vue 插件。通过 `UrlAdapter` 实现可插拔的 URL 同步（此处不引入 `vue-router`）。 |
@@ -182,7 +182,27 @@ app.post('/articles/query', handler, {
 行（“状态不是草稿”包含没有状态的行），与 `notEmpty` 把 NULL 视为空的做法一致。
 每个 op 的完整语义见 [DESIGN.md](./DESIGN.md) 的 “Op semantics”。
 
-### 5. 类型化 AST
+### 5. 在内存中过滤数据
+
+`createMatcher` 把解析后的 AST 应用到已有的数据上（前端本地列表、乐观更新、测试
+数据）。它与 SQL 翻译器遵循同一套 op 语义：同一份共享用例会同时跑这两者。
+
+```ts
+import { createMatcher, parseAst } from '@dql-kit/core'
+
+const matcher = createMatcher({ schema: articleFilterSchema })
+const parsed = parseAst(filter, articleFilterSchema)
+if (parsed.ok) {
+  const visible = matcher.filter(parsed.ast, rows)  // 或 matcher.matches(ast, row)
+}
+```
+
+行数据按数据库驱动返回的形式读取：`null` / `undefined` 视为 NULL，`date` /
+`datetime` 的值可以是 `Date` 对象或 ISO 字符串。可选项：`get(row, fieldKey)`
+读取其他结构的行，`now()` 固定 `inLast` 使用的时钟，`ops` 注册自定义 op 的求值
+函数（对应翻译器的 `ops`）。
+
+### 6. 类型化 AST
 
 `ValidAST<typeof schema>` 在编译期一起检查 `field`、`op` 和 `value`。
 `analyze`、`prune`、`validate`、`fromUrl`、`parseAst` 以及

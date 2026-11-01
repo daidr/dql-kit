@@ -4,16 +4,18 @@ import { usePlaygroundStore } from '../store.ts'
 import DqlTab from './tabs/DqlTab.vue'
 import DraftAstTab from './tabs/DraftAstTab.vue'
 import ErrorsTab from './tabs/ErrorsTab.vue'
+import RowsTab from './tabs/RowsTab.vue'
 import SqlTab from './tabs/SqlTab.vue'
 import ValidAstTab from './tabs/ValidAstTab.vue'
 
-type TabId = 'draft' | 'valid' | 'errors' | 'sql' | 'dql'
+type TabId = 'draft' | 'valid' | 'errors' | 'sql' | 'rows' | 'dql'
 
 const tabs: Array<{ id: TabId, label: string }> = [
   { id: 'draft',  label: '当前 AST' },
   { id: 'valid',  label: '合法化 AST' },
   { id: 'errors', label: '错误' },
   { id: 'sql',    label: 'SQL' },
+  { id: 'rows',   label: '样例数据' },
   { id: 'dql',    label: 'DQL' },
 ]
 
@@ -51,6 +53,7 @@ const errorBadge = computed(() => errorCount.value + droppedCount.value)
       <ValidAstTab v-else-if="active === 'valid'" />
       <ErrorsTab v-else-if="active === 'errors'" />
       <SqlTab v-else-if="active === 'sql'" />
+      <RowsTab v-else-if="active === 'rows'" />
       <DqlTab v-else-if="active === 'dql'" />
     </div>
   </section>
