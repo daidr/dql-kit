@@ -12,7 +12,7 @@ Type-safe, schema-driven filter / query AST library for dashboards.
 
 | Package | Description |
 |---|---|
-| [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, `parseAst` for untrusted input, `toJsonSchema` for request bodies, URL serialization. Zero ORM / framework / i18n deps. |
+| [`@dql-kit/core`](./packages/core) | Schema builders (`f.*`), AST types, `analyze` / `prune` / `validate`, `parseAst` for untrusted input, `toJsonSchema` for request bodies, URL serialization, `createMatcher` for in-memory filtering. Zero ORM / framework / i18n deps. |
 | [`@dql-kit/drizzle-pg`](./packages/drizzle-pg) | Drizzle ORM translator, **PostgreSQL only**. Parsed AST → `SQL` WHERE fragment. Custom ops are passed at construction; no mutating `registerOp`. |
 | [`@dql-kit/typebox`](./packages/typebox) | `toTypeBox(schema)` — the `toJsonSchema` output as a TypeBox schema, e.g. for an Elysia route body. |
 | [`@dql-kit/vue-headless`](./packages/vue-headless) | `useFilter` composable + `createDqlKit` Vue plugin. Pluggable URL sync via `UrlAdapter` (`vue-router` not imported here). |
@@ -186,7 +186,30 @@ whose column is NULL ("status is not draft" includes rows with no status),
 the same way `notEmpty` treats NULL as empty. See "Op semantics" in
 [DESIGN.md](./DESIGN.md) for every op.
 
-### 5. Typed ASTs
+### 5. Filter rows in memory
+
+`createMatcher` applies a parsed AST to rows you already have (a client-side
+list, an optimistic update, a test fixture). It follows the same op
+semantics as the SQL translator: a shared case suite runs both against the
+same data.
+
+```ts
+import { createMatcher, parseAst } from '@dql-kit/core'
+
+const matcher = createMatcher({ schema: articleFilterSchema })
+const parsed = parseAst(filter, articleFilterSchema)
+if (parsed.ok) {
+  const visible = matcher.filter(parsed.ast, rows)  // or matcher.matches(ast, row)
+}
+```
+
+Rows are read the way a database driver returns them: `null` / `undefined`
+is NULL, `date` / `datetime` values may be `Date` objects or ISO strings.
+Options: `get(row, fieldKey)` for other row shapes, `now()` to pin the clock
+for `inLast`, and `ops` for custom op matchers (the counterpart of the
+translator's `ops`).
+
+### 6. Typed ASTs
 
 `ValidAST<typeof schema>` checks `field`, `op` and `value` together at
 compile time. `analyze`, `prune`, `validate`, `fromUrl`, `parseAst` and
