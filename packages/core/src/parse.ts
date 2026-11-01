@@ -5,10 +5,12 @@ import {
   expectedTypeLabel,
   observedTypeLabel,
 } from './check.ts'
+import { migrateAst, schemaVersion } from './migrate.ts'
 import type {
   AstLimits,
   CheckedAST,
   Combinator,
+  DroppedNode,
   FilterSchema,
   NodePath,
   ParseError,
@@ -73,6 +75,22 @@ const has = (obj: Record<string, unknown>, key: string): boolean =>
 
 const isCombinator = (x: unknown): x is Combinator => x === 'and' || x === 'or'
 
+// alias → field key, built once per schema object.
+const aliasMaps = new WeakMap<FilterSchema, Map<string, string>>()
+const aliasTarget = (schema: FilterSchema, name: string): string | undefined => {
+  let map = aliasMaps.get(schema)
+  if (!map) {
+    map = new Map()
+    for (const [key, def] of Object.entries(schema.fields)) {
+      for (const alias of def.aliases ?? []) {
+        if (!has(schema.fields, alias) && !map.has(alias)) map.set(alias, key)
+      }
+    }
+    aliasMaps.set(schema, map)
+  }
+  return map.get(name)
+}
+
 // Copy a value into a fresh structure so the output AST never aliases
 // caller-owned input. Values that passed the shape/type checks are
 // primitives, arrays of primitives, `{ amount, unit }` or `{ unit, offset }`,
@@ -95,18 +113,21 @@ const walkCondition = (
   st: WalkState,
 ): ValidCondition | null => {
   const { keys, schema, errors } = st
-  const fieldName = obj[keys.field]
-  if (fieldName == null) {
+  const rawField = obj[keys.field]
+  if (rawField == null) {
     errors.push({ path, code: 'incomplete', missing: 'field' })
     return null
   }
-  if (typeof fieldName !== 'string') {
+  if (typeof rawField !== 'string') {
     errors.push({ path, code: 'invalid_node', message: 'field must be a string' })
     return null
   }
-  const field = has(schema.fields, fieldName) ? schema.fields[fieldName] : undefined
-  if (!field) {
-    errors.push({ path, code: 'unknown_field', field: fieldName })
+  // A renamed field is still read under its old name (`aliases`), and
+  // written back under the new one.
+  const fieldName = has(schema.fields, rawField) ? rawField : aliasTarget(schema, rawField)
+  const field = fieldName !== undefined && has(schema.fields, fieldName) ? schema.fields[fieldName] : undefined
+  if (!field || fieldName === undefined) {
+    errors.push({ path, code: 'unknown_field', field: rawField })
     return null
   }
   const opName = obj[keys.op]
@@ -283,6 +304,15 @@ const resolveLimits = (limits?: Partial<AstLimits>): AstLimits => ({
   ...limits,
 })
 
+export type ParseOptions = Partial<AstLimits> & {
+  /**
+   * Schema version `json` was written with (e.g. stored next to a saved
+   * filter). Older ASTs run through the schema's `migrations` first.
+   * Defaults to the schema's current version (no migration).
+   */
+  fromVersion?: number
+}
+
 /**
  * Parse an untrusted AST (a request body, a stored filter, anything that
  * did not come from this process's own `useFilter`) against a schema.
@@ -298,14 +328,35 @@ const resolveLimits = (limits?: Partial<AstLimits>): AstLimits => ({
 export const parseAst = <S extends FilterSchema>(
   json: unknown,
   schema: S,
-  limits?: Partial<AstLimits>,
+  options?: ParseOptions,
 ): ParseResult<S> => {
-  const { ast, errors } = walkAst(json, schema, {
+  const { fromVersion, ...limits } = options ?? {}
+  const migrated = migrateAst(json, schema, fromVersion ?? schemaVersion(schema))
+  if (!migrated.ok) return { ok: false, errors: [migrated.error] }
+  const { ast, errors } = walkAst(migrated.value, schema, {
     keys: LONG_KEYS,
     limits: resolveLimits(limits),
   })
   if (errors.length > 0) return { ok: false, errors }
   return { ok: true, ast: ast as CheckedAST as CheckedAST<S> }
+}
+
+/**
+ * Lenient counterpart of `parseAst` for long-key ASTs you stored
+ * yourself (saved presets, persisted drafts): runs migrations from
+ * `fromVersion`, then keeps every node that passes and reports the rest
+ * in `dropped`, like `fromUrl`. Never throws.
+ */
+export const restoreAst = <S extends FilterSchema>(
+  json: unknown,
+  schema: S,
+  options?: ParseOptions,
+): { ast: ValidAST<S>, dropped: DroppedNode[] } => {
+  const { fromVersion, ...limits } = options ?? {}
+  const migrated = migrateAst(json, schema, fromVersion ?? schemaVersion(schema))
+  if (!migrated.ok) return { ast: { combinator: 'and', children: [] }, dropped: [migrated.error] }
+  const { ast, errors } = walkAst(migrated.value, schema, { keys: LONG_KEYS, limits: resolveLimits(limits) })
+  return { ast: ast as ValidAST<S>, dropped: errors }
 }
 
 export { resolveLimits }

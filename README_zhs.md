@@ -117,6 +117,12 @@ const filter = useFilter({
 order } }`，`<FilterPanel>` 就会为每个分组渲染一个 `<optgroup>`（未分组的字段排在
 最后；只有一个分组时不显示分组标题）。
 
+**保存的预设。** `usePresets({ filter, storage })` 把已提交的筛选保存为
+`{ id, name, version, ast }`，应用时会先经过 schema 的 migrations；不再有效的条件会
+出现在 `filter.dropped` 中。`storage` 可以是任何实现了 `{ list, save, remove, rename }`
+的对象（同步或异步），例如 `createLocalPresetStorage('my-app:presets')`，或者调用
+你自己的接口。vue-ui 的 `<FilterPresets :presets="presets">` 是一个参考下拉组件。
+
 **摘要与筛选标签。** core 的 `describeAst(ast, schema)` 返回与 AST 结构一致的树，
 包含字段 / op 标签、拆分后的值，以及类似 `Status in Draft, Published AND (Rating gt 3 OR …)`
 的 `text`；它不依赖 UI，可用于审计日志等场景。`filter.describe()` 在此基础上使用
@@ -224,6 +230,28 @@ const translator = createDrizzleTranslator({
 **否定类 op 保留 NULL 行。** `neq`、`notIn`、`notContains` 会匹配列为 NULL 的
 行（“状态不是草稿”包含没有状态的行），与 `notEmpty` 把 NULL 视为空的做法一致。
 每个 op 的完整语义见 [DESIGN.md](./DESIGN.md) 的 “Op semantics”。
+
+**Schema 版本与字段改名。** schema 变化后，旧链接和已保存的筛选仍然可用：
+
+```ts
+const schema = defineFilterSchema({
+  version: 2,
+  migrations: {
+    // 把长键名 JSON 从版本 1 升级到 2；输入不可信
+    1: (ast) => renameEnumValue(ast, 'status', 'live', 'published'),
+  },
+  fields: {
+    title: f.string({ aliases: ['name'] }), // 原名 `name`
+    status: f.enum(['draft', 'published'] as const),
+  },
+})
+```
+
+设置 `version` 后，`toUrl(ast, schema)` 输出 `{ v, a }`（`useFilter` 会传入
+schema）。`fromUrl` 把没有信封的旧链接视为版本 0，并依次执行剩余的 migrations；来自
+更新版本的链接返回 `unsupported_version`。读取已保存的筛选时给 `parseAst` 传
+`{ fromVersion }`。`aliases` 只在 `parseAst` / `fromUrl` 读取时生效，不会出现在
+`toJsonSchema` 的输出中。
 
 ### 5. 在内存中过滤数据
 

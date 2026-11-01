@@ -117,6 +117,13 @@ const filter = useFilter({
 order } }` on the schema; `<FilterPanel>` then shows one `<optgroup>` per group
 (ungrouped fields last, no headings when there is only one group).
 
+**Saved presets.** `usePresets({ filter, storage })` saves the committed filter
+as `{ id, name, version, ast }` and applies it back through the schema's
+migrations; conditions that no longer validate show up in `filter.dropped`.
+`storage` is any `{ list, save, remove, rename }` (sync or async), e.g.
+`createLocalPresetStorage('my-app:presets')` or calls to your API. vue-ui's
+`<FilterPresets :presets="presets">` is a reference dropdown.
+
 **Summaries and chips.** `describeAst(ast, schema)` from core returns a tree
 mirroring the AST with field / op labels, the values split into parts, and a
 `text` such as `Status in Draft, Published AND (Rating gt 3 OR …)`; it runs
@@ -233,6 +240,29 @@ bounds. Give `createMatcher` the same `timeZone` and `weekStartsOn`.
 whose column is NULL ("status is not draft" includes rows with no status),
 the same way `notEmpty` treats NULL as empty. See "Op semantics" in
 [DESIGN.md](./DESIGN.md) for every op.
+
+**Schema versions and renamed fields.** Old links and stored filters keep
+working when the schema changes:
+
+```ts
+const schema = defineFilterSchema({
+  version: 2,
+  migrations: {
+    // long-key JSON from version 1 to 2; runs on untrusted input
+    1: (ast) => renameEnumValue(ast, 'status', 'live', 'published'),
+  },
+  fields: {
+    title: f.string({ aliases: ['name'] }), // was `name`
+    status: f.enum(['draft', 'published'] as const),
+  },
+})
+```
+
+With `version` set, `toUrl(ast, schema)` writes `{ v, a }` (`useFilter` passes
+the schema). `fromUrl` reads bare links as version 0 and runs the remaining
+migrations; a link from a newer version is `unsupported_version`. Pass
+`{ fromVersion }` to `parseAst` for stored filters. `aliases` are read by
+`parseAst` / `fromUrl`, not listed by `toJsonSchema`.
 
 ### 5. Filter rows in memory
 

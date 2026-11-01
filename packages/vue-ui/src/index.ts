@@ -1,6 +1,7 @@
 export { FilterPanel } from './FilterPanel.ts'
 export { FilterButton, type FilterButtonSlotProps } from './FilterButton.ts'
 export { FilterChips, type FilterChipSlotProps } from './FilterChips.ts'
+export { FilterPresets } from './FilterPresets.ts'
 export {
   StringInput,
   StringTokenInput,
