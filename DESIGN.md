@@ -433,10 +433,15 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
   (`%257B%2522c%2522…`). `fromUrl` still reads such links: if the value isn't
   JSON it decodes once and retries.
 - **(c3)** Day-1 emits **bare AST** (no envelope). `fromUrl` includes a sniffer:
-  a root object with a numeric `v` and no `c` is an envelope. Future versions
-  can add envelope `{ v: 1, ast: ... }` without breaking old URLs; until then
-  an envelope is reported as `unsupported_version` in `dropped` with an empty
-  AST.
+  a root object with a numeric `v` and no `c` is an envelope. ~~Future versions
+  can add envelope `{ v: 1, ast: ... }`.~~ **Superseded (M6)**: the envelope is
+  `{ v, a }` (`a` matches the other one-letter keys). A schema with `version`
+  writes it; an unversioned schema still writes the bare AST, which reads as
+  version 0. Older links run through the schema's `migrations` (each
+  `migrations[n]` takes long-key JSON from version `n` to `n + 1`); a newer
+  one is `unsupported_version`, a throwing migration `parse_error`. Renamed
+  fields are read through `aliases`. Stored filters take the same path via
+  `parseAst(json, schema, { fromVersion })` / `restoreAst`.
 - **`fromUrl` never throws.** URLs are user input (pasted links, history), and
   `useFilter` reads them during component setup. Unparseable values, unknown
   versions, malformed nodes and limit violations all land in `dropped`.
@@ -505,7 +510,13 @@ filter.invalidateLabels(fieldKey?)  // bust resolve cache
 - **(c2)** Day-1 ships NO saved-filter persistence or preset UI. The hook exposes
   `applyAst(ast) / toJSON() / clear()` — sufficient primitives for any preset
   storage strategy (localStorage / backend / URL share). Persistence target and
-  UI shape are application-layer concerns.
+  UI shape are application-layer concerns. **Superseded (M6)**: storage still
+  belongs to the app, but every app rewrote the same save / list / migrate /
+  apply loop, and applying an old preset needs the schema's migrations. So
+  vue-headless ships `usePresets({ filter, storage })` against a small
+  `PresetStorage` interface (`list` / `save` / `remove` / `rename`, sync or
+  async) plus `createLocalPresetStorage`, and vue-ui a reference
+  `<FilterPresets>`. Backend storage stays app-side.
 - **Packaging**:
   - New repo at `D:\devFolder\dql-kit\` (Bun workspaces).
   - Three packages: `@dql-kit/core`, `@dql-kit/drizzle`, `@dql-kit/vue`.

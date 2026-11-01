@@ -571,7 +571,7 @@ export const useFilter = <S extends FilterSchema>(
       const stopExternal = urlAdapter.watch((raw) => {
         const s = schemaRef.value
         if (!s) return
-        const currentEncoded = toUrl(committedValidRef.value)
+        const currentEncoded = toUrl(committedValidRef.value, schemaRef.value)
         if (currentEncoded === raw) return
         if (raw.length === 0) {
           if (draft.value.children.length > 0 || draft.value.combinator !== 'and') {
@@ -590,7 +590,7 @@ export const useFilter = <S extends FilterSchema>(
       // Outgoing writer observes committedValid. In 'auto' mode this
       // updates on every keystroke, in 'manual' only on commit().
       watch(committedValid, (newVal) => {
-        const encoded = toUrl(newVal)
+        const encoded = toUrl(newVal, schemaRef.value)
         urlAdapter.write(encoded)
       })
     }

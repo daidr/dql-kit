@@ -20,7 +20,8 @@ export {
   isCondition,
 } from './ast.ts'
 export { COMPACT_KEYS, toUrl, fromUrl } from './url.ts'
-export { parseAst, DEFAULT_AST_LIMITS } from './parse.ts'
+export { parseAst, restoreAst, DEFAULT_AST_LIMITS, type ParseOptions } from './parse.ts'
+export { migrateAst, schemaVersion } from './migrate.ts'
 export {
   DATE_RELATIVE_UNITS,
   RELATIVE_UNITS,

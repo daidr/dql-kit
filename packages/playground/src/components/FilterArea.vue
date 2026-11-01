@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { FilterButton, FilterChips, FilterPanel } from '@dql-kit/vue-ui'
+import { createLocalPresetStorage, usePresets } from '@dql-kit/vue-headless'
+import { FilterButton, FilterChips, FilterPanel, FilterPresets } from '@dql-kit/vue-ui'
 import { computed } from 'vue'
 import { usePlaygroundStore } from '../store.ts'
 
 const store = usePlaygroundStore()
 
 const filter = computed(() => store.filter.value)
+// Presets are bound to one filter instance, which the store replaces
+// when the schema changes; the storage key outlives it.
+const presetStorage = createLocalPresetStorage('dql-playground:presets')
+const presets = computed(() => usePresets({ filter: filter.value, storage: presetStorage }))
 const config = computed(() => store.config.value)
 const errors = computed(() => filter.value.errors.value)
 const dropped = computed(() => filter.value.dropped.value)
@@ -52,6 +57,16 @@ const onDiscard = () => filter.value.discard()
         </button>
       </div>
     </header>
+
+    <div class="filter-area__chips">
+      <FilterPresets
+        :presets="presets"
+        placeholder="— 预设 —"
+        name-placeholder="预设名称"
+        save-label="保存"
+        delete-label="删除"
+      />
+    </div>
 
     <div v-if="filter.committedValid.value.children.length > 0" class="filter-area__chips">
       <FilterChips :filter="filter" remove-label="移除" />

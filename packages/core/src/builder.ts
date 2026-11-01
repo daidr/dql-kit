@@ -8,8 +8,10 @@ import type {
   DateTimeField,
   EnumField,
   FieldDef,
+  FilterSchema,
   IdField,
   Label,
+  Migration,
   NumberField,
   OpDef,
   StringField,
@@ -18,6 +20,8 @@ import type {
 type CommonOpts = {
   label?: Label
   group?: string
+  /** Former names of the field, still accepted when reading ASTs. */
+  aliases?: readonly string[]
   /**
    * The column can be NULL: adds `isEmpty` / `notEmpty` to the field's
    * default ops (string and array fields already have them).
@@ -134,6 +138,7 @@ const withNullOps = (ops: readonly OpDef[], nullable: boolean | undefined): OpDe
 const commonFields = (opts: CommonOpts) => ({
   ...(opts.label !== undefined && { label: opts.label }),
   ...(opts.group !== undefined && { group: opts.group }),
+  ...(opts.aliases !== undefined && opts.aliases.length > 0 && { aliases: [...opts.aliases] }),
 })
 
 // Two overloads so the op union is right whether or not `ops` is
@@ -280,11 +285,49 @@ export const f = {
 export type DefineFilterSchemaInput<F extends Record<string, FieldDef>> = {
   fields: F
   groups?: Record<string, { label?: Label, order?: number }>
+  /** Schema version, a positive integer. See `FilterSchema.version`. */
+  version?: number
+  /** `migrations[n]` upgrades an AST from version `n` to `n + 1`. */
+  migrations?: Record<number, Migration>
+}
+
+const fail = (msg: string): never => {
+  throw new Error(`[dql-kit/core] defineFilterSchema: ${msg}`)
+}
+
+const checkSchemaSpec = (spec: DefineFilterSchemaInput<Record<string, FieldDef>>): void => {
+  const { version, migrations } = spec
+  if (version !== undefined && (!Number.isInteger(version) || version < 1)) {
+    fail(`version must be a positive integer, got ${String(version)}`)
+  }
+  for (const key of Object.keys(migrations ?? {})) {
+    const from = Number(key)
+    if (!Number.isInteger(from) || from < 0 || from >= (version ?? 0)) {
+      fail(`migrations[${key}] must upgrade from a version between 0 and ${(version ?? 0) - 1}`)
+    }
+    if (typeof migrations![from] !== 'function') fail(`migrations[${key}] must be a function`)
+  }
+  const owner = new Map<string, string>()
+  for (const [key, def] of Object.entries(spec.fields)) {
+    for (const alias of def.aliases ?? []) {
+      if (Object.prototype.hasOwnProperty.call(spec.fields, alias)) {
+        fail(`alias "${alias}" of field "${key}" is the name of another field`)
+      }
+      const prev = owner.get(alias)
+      if (prev !== undefined) fail(`alias "${alias}" is used by both "${prev}" and "${key}"`)
+      owner.set(alias, key)
+    }
+  }
 }
 
 export const defineFilterSchema = <F extends Record<string, FieldDef>>(
   spec: DefineFilterSchemaInput<F>,
-) => ({
-  fields: spec.fields,
-  groups: spec.groups ?? {},
-})
+): FilterSchema<F> => {
+  checkSchemaSpec(spec)
+  return {
+    fields: spec.fields,
+    groups: spec.groups ?? {},
+    ...(spec.version !== undefined && { version: spec.version }),
+    ...(spec.migrations !== undefined && { migrations: { ...spec.migrations } }),
+  }
+}

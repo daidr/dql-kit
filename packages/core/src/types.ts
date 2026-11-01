@@ -53,6 +53,12 @@ export interface FieldDef<O extends OpDef = OpDef> {
   typeId: FieldTypeId
   label?: Label
   group?: string
+  /**
+   * Former names of this field. ASTs (URLs, stored filters, request
+   * bodies) that still use one are read as this field and written back
+   * under its current key.
+   */
+  aliases?: readonly string[]
   ops: O[]
   enumValues?: ReadonlyArray<{ value: string | number, label?: Label }>
   itemType?: FieldDef
@@ -125,9 +131,25 @@ export type CustomField<
 
 export type GroupMeta = { label?: Label, order?: number }
 
+/**
+ * Upgrades a long-key AST JSON (`combinator` / `children` / `field` /
+ * `op` / `value`) from one schema version to the next. Gets untrusted
+ * JSON: it must cope with any shape, and the result is validated
+ * afterwards like any other input.
+ */
+export type Migration = (ast: unknown) => unknown
+
 export type FilterSchema<F extends Record<string, FieldDef> = Record<string, FieldDef>> = {
   fields: F
   groups: Record<string, GroupMeta>
+  /**
+   * Schema version (positive integer) for stored filters and URLs. A
+   * versioned schema writes URLs as `{ v, a }`; ASTs from an older
+   * version run through `migrations` first. Unversioned = 0.
+   */
+  version?: number
+  /** `migrations[n]` upgrades an AST from version `n` to `n + 1`. */
+  migrations?: Readonly<Record<number, Migration>>
 }
 
 export type DraftCondition = {
@@ -180,9 +202,9 @@ export type ValidationError =
  *
  * - `invalid_node`: not a group or condition (wrong JSON type, bad
  *   combinator, non-array children, non-string field/op).
- * - `parse_error`: the URL string is not JSON.
- * - `unsupported_version`: the URL uses a newer envelope this build
- *   can't read.
+ * - `parse_error`: the URL string is not JSON, or a migration threw.
+ * - `unsupported_version`: the input is from a schema version newer
+ *   than this schema's (or not a valid version number).
  * - `limit_exceeded`: one of `AstLimits` was hit.
  */
 export type ParseError =

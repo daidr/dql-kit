@@ -12,7 +12,8 @@
 
 .dql-filter-panel,
 .dql-filter-button,
-.dql-chips {
+.dql-chips,
+.dql-presets {
   --dql-radius-sm: 6px;
   --dql-radius-md: 8px;
   --dql-radius-lg: 12px;
@@ -63,7 +64,8 @@
 @media (prefers-color-scheme: dark) {
   .dql-filter-panel,
 .dql-filter-button,
-.dql-chips {
+.dql-chips,
+.dql-presets {
     --dql-border: #2a2f3b;
     --dql-border-strong: #353b4a;
     --dql-border-soft: #1a1d24;
@@ -878,4 +880,42 @@
 .dql-chip-separator {
   font-size: var(--dql-font-size-xs);
   color: var(--dql-text-faint);
+}
+
+/* Saved presets */
+.dql-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--dql-font-size-sm);
+  color: var(--dql-text);
+}
+.dql-presets-select,
+.dql-presets-name,
+.dql-presets-save,
+.dql-presets-delete {
+  height: var(--dql-control-h);
+  padding: 0 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--dql-surface);
+  border: 1px solid var(--dql-border);
+  border-radius: var(--dql-radius-md);
+  outline: none;
+}
+.dql-presets-save,
+.dql-presets-delete {
+  cursor: pointer;
+}
+.dql-presets-save:disabled,
+.dql-presets-delete:disabled {
+  color: var(--dql-text-faint);
+  cursor: default;
+}
+.dql-presets-select:hover,
+.dql-presets-name:focus,
+.dql-presets-save:not(:disabled):hover,
+.dql-presets-delete:not(:disabled):hover {
+  border-color: var(--dql-border-strong);
 }

@@ -1,5 +1,6 @@
 import { emptyAst } from './ast.ts'
-import { resolveLimits, walkAst, type NodeKeys } from './parse.ts'
+import { expandCompactKeys, migrateAst, schemaVersion } from './migrate.ts'
+import { LONG_KEYS, resolveLimits, walkAst, type NodeKeys } from './parse.ts'
 import type {
   AstLimits,
   Combinator,
@@ -35,10 +36,16 @@ const compactifyNode = (n: ValidNode): CompactNode => {
  * plain string, *not* URL-encoded — encoding belongs to whatever puts it
  * in a URL (the router, `URLSearchParams`, ...). Encoding here as well
  * would get it encoded twice.
+ *
+ * With a versioned `schema` the AST is wrapped in an envelope
+ * `{ v: <version>, a: <ast> }`, so links outlive later schema changes
+ * (see `migrations`). Without one it is the bare AST.
  */
-export const toUrl = (ast: ValidAST): string => {
+export const toUrl = (ast: ValidAST, schema?: FilterSchema): string => {
   if (ast.children.length === 0) return ''
-  return JSON.stringify(compactifyNode(ast))
+  const compact = compactifyNode(ast)
+  const version = schema ? schemaVersion(schema) : 0
+  return JSON.stringify(version > 0 ? { v: version, a: compact } : compact)
 }
 
 const parseJson = (raw: string): { ok: true, value: unknown } | { ok: false } => {
@@ -73,8 +80,12 @@ const parseUrlValue = (raw: string): { ok: true, value: unknown } | { ok: false 
  * stale or hand-edited link still opens with the parts that make sense.
  * Applies the same rules as `parseAst` (including `limits`, which
  * default to `DEFAULT_AST_LIMITS`); a link that can't be parsed at all
- * yields an empty AST with a single `parse_error`, and one using a newer
- * envelope version yields `unsupported_version`.
+ * yields an empty AST with a single `parse_error`, and one from a newer
+ * schema version yields `unsupported_version`.
+ *
+ * A bare AST is version 0; an envelope `{ v, a }` carries its version.
+ * Links older than the schema run through its `migrations` first, and
+ * renamed fields are read through their `aliases`.
  */
 export const fromUrl = <S extends FilterSchema>(
   value: string,
@@ -88,10 +99,11 @@ export const fromUrl = <S extends FilterSchema>(
     return { ast: emptyAst(), dropped: [{ path: [], code: 'parse_error' }] }
   }
 
-  // Version sniffer: a future envelope shape is { v: <number>, ast: ... }.
-  // Day-1 emits a bare root group (`c` + `n`, never a top-level `v`), so
-  // a numeric `v` without `c` at the root is unambiguously an envelope.
-  const root = parsed.value
+  // Envelope sniffer: a bare AST is a root group (`c` + `n`, never a
+  // top-level `v`), so a numeric `v` without `c` at the root is an
+  // envelope `{ v, a }`.
+  let root = parsed.value
+  let version = 0
   if (
     root != null
     && typeof root === 'object'
@@ -99,15 +111,23 @@ export const fromUrl = <S extends FilterSchema>(
     && !('c' in root)
     && typeof (root as { v?: unknown }).v === 'number'
   ) {
-    return {
-      ast: emptyAst(),
-      dropped: [{ path: [], code: 'unsupported_version', version: (root as { v: number }).v }],
+    const env = root as { v: number, a?: unknown }
+    version = env.v
+    if (!Number.isInteger(version) || version < 1 || version > schemaVersion(schema)) {
+      return { ast: emptyAst(), dropped: [{ path: [], code: 'unsupported_version', version }] }
     }
+    if (env.a === undefined) return { ast: emptyAst(), dropped: [{ path: [], code: 'parse_error' }] }
+    root = env.a
   }
 
-  const { ast, errors } = walkAst(root, schema, {
-    keys: COMPACT_KEYS,
-    limits: resolveLimits(limits),
-  })
+  const walkOpts = { limits: resolveLimits(limits) }
+  if (version === schemaVersion(schema)) {
+    const { ast, errors } = walkAst(root, schema, { ...walkOpts, keys: COMPACT_KEYS })
+    return { ast: ast as ValidAST<S>, dropped: errors }
+  }
+  // Older link: migrations work on long keys, as stored filters do.
+  const migrated = migrateAst(expandCompactKeys(root), schema, version)
+  if (!migrated.ok) return { ast: emptyAst(), dropped: [migrated.error] }
+  const { ast, errors } = walkAst(migrated.value, schema, { ...walkOpts, keys: LONG_KEYS })
   return { ast: ast as ValidAST<S>, dropped: errors }
 }
