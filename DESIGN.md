@@ -563,7 +563,13 @@ layer or a later phase, with API hooks already preserved:
 
 - Aggregations (HAVING-style filters)?
 - Cross-row predicates (e.g., "articles with at least one comment containing X")?
-- Field-level permissions (hide some fields per user role)?
+- ~~Field-level permissions (hide some fields per user role)?~~ **Resolved**:
+  `pickFields` / `omitFields` build a per-role sub-schema. The server parses
+  with it and translates with the full-schema translator (a `CheckedAST` of a
+  field subset is a `CheckedAST` of the full schema); the front end renders
+  the same sub-schema. Out-of-role fields are rejected as `unknown_field`, the
+  same as fields that don't exist, so a request reveals nothing about fields
+  outside the role.
 
 Resolved: server-side parsing is `parseAst` (see Q10).
 

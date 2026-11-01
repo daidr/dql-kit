@@ -3,6 +3,7 @@ import {
   defineFilterSchema,
   f,
   parseAst,
+  pickFields,
   type CheckedAST,
   type ValidAST,
 } from '@dql-kit/core'
@@ -185,6 +186,24 @@ describe('createDrizzleTranslator — SQL execution', () => {
     )
     if (!r.ok) throw new Error('expected ok')
     expect(() => t.toWhere(r.ast)).toThrow(/No SQL translator registered for op "noSuchOp"/)
+  })
+
+  test('an AST checked against a field subset runs on the full-schema translator', async () => {
+    const t = createDrizzleTranslator({ schema, table: articles })
+    const role = pickFields(schema, ['title'])
+    const input = {
+      combinator: 'and',
+      children: [{ field: 'title', op: 'eq', value: 'hello' }],
+    }
+    const r = parseAst(input, role)
+    if (!r.ok) throw new Error('expected ok')
+    const rows = await db.select().from(articles).where(t.toWhere(r.ast))
+    expect(rows).toHaveLength(2)
+    const outOfRole = parseAst(
+      { combinator: 'and', children: [{ field: 'rating', op: 'eq', value: 3 }] },
+      role,
+    )
+    expect(outOfRole.ok).toBe(false)
   })
 
   test('parseAst output translates and runs', async () => {

@@ -264,6 +264,25 @@ migrations; a link from a newer version is `unsupported_version`. Pass
 `{ fromVersion }` to `parseAst` for stored filters. `aliases` are read by
 `parseAst` / `fromUrl`, not listed by `toJsonSchema`.
 
+**Fields per role.** `pickFields(schema, keys)` and `omitFields(schema, keys)`
+return a schema with a subset of the fields (unused groups dropped). Parse with
+the role's schema and translate with the full one; render the same subset on
+the front end. Out-of-role fields are rejected as `unknown_field`:
+
+```ts
+import { omitFields, parseAst } from '@dql-kit/core'
+
+const forRole = (user: User) =>
+  user.isAdmin ? articleFilterSchema : omitFields(articleFilterSchema, ['authorId'])
+
+const parsed = parseAst(body.filter, forRole(user))
+if (!parsed.ok) throw new BadRequest(parsed.errors)
+const rows = await db.select().from(table.articles).where(translator.toWhere(parsed.ast))
+```
+
+Build each role's subset once at startup rather than per request: some
+lookups are cached per schema object.
+
 ### 5. Filter rows in memory
 
 `createMatcher` applies a parsed AST to rows you already have (a client-side

@@ -253,6 +253,24 @@ schema）。`fromUrl` 把没有信封的旧链接视为版本 0，并依次执�
 `{ fromVersion }`。`aliases` 只在 `parseAst` / `fromUrl` 读取时生效，不会出现在
 `toJsonSchema` 的输出中。
 
+**按角色限制字段。** `pickFields(schema, keys)` 和 `omitFields(schema, keys)`
+返回只含部分字段的 schema（不再使用的分组会一并去掉）。用角色对应的 schema 做
+`parseAst`，用完整 schema 创建的 translator 翻译；前端渲染同一个子集。角色之外的字段
+会被拒绝，错误码为 `unknown_field`：
+
+```ts
+import { omitFields, parseAst } from '@dql-kit/core'
+
+const forRole = (user: User) =>
+  user.isAdmin ? articleFilterSchema : omitFields(articleFilterSchema, ['authorId'])
+
+const parsed = parseAst(body.filter, forRole(user))
+if (!parsed.ok) throw new BadRequest(parsed.errors)
+const rows = await db.select().from(table.articles).where(translator.toWhere(parsed.ast))
+```
+
+建议启动时为每个角色构建一次子集，不要每个请求都重新构建：部分查找结果按 schema 对象缓存。
+
 ### 5. 在内存中过滤数据
 
 `createMatcher` 把解析后的 AST 应用到已有的数据上（前端本地列表、乐观更新、测试
