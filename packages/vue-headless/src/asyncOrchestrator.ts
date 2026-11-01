@@ -48,6 +48,9 @@ export type AsyncOrchestrator = {
   labelOf: (fieldKey: string, id: string | number) => LabelStatus
   // Drop cached labels (one field or all) and abort their in-flight resolves.
   invalidateLabels: (fieldKey?: string) => void
+  // Abort the current search and drop its late results, so the next
+  // `setQuery` starts from a cleared slot.
+  resetSearch: () => void
   // Abort all in-flight searches and resolves, clear all timers and
   // caches. Called by useFilter on scope dispose so unmounting a host
   // component doesn't leak fetchers or memory.
@@ -293,6 +296,12 @@ export const createAsyncOrchestrator = (
   const _peek: AsyncOrchestrator['_peek'] = (fieldKey, id) =>
     cache.get(fieldKey)?.get(id) ?? { status: 'pending' }
 
+  const resetSearch: AsyncOrchestrator['resetSearch'] = () => {
+    cancelSearch()
+    searchEpoch++
+    lastFieldKey = null
+  }
+
   const dispose: AsyncOrchestrator['dispose'] = () => {
     cancelSearch()
     searchEpoch++
@@ -303,5 +312,5 @@ export const createAsyncOrchestrator = (
     bumpCache()
   }
 
-  return { setQuery, resolveBatch, labelOf, invalidateLabels, dispose, _peek }
+  return { setQuery, resolveBatch, labelOf, invalidateLabels, resetSearch, dispose, _peek }
 }

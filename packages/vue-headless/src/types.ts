@@ -60,6 +60,12 @@ export type FetcherMapFor<S extends FilterSchema> = {
 }
 
 export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
+  /**
+   * The schema, or a ref to one that loads later or changes. While it is
+   * `undefined` the URL and the saved draft are left untouched; the first
+   * schema reads them. A switch removes conditions on fields the new
+   * schema lacks (reported in `dropped`) and keeps other edits.
+   */
   schema: S | Ref<S | undefined>
   fetchers?: FetcherMapFor<S>
   initial?: ValidAST<S>
@@ -167,6 +173,7 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   commit: () => void
   discard: () => void
   errors: ComputedRef<ValidationError[]>
+  /** Conditions dropped reading the URL, applying a preset or switching schemas. */
   dropped: Ref<DroppedNode[]>
   dismissDropped: () => void
   search: Ref<SearchSlot>

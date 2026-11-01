@@ -106,7 +106,7 @@ const filter = useFilter({
 // filter.valid           — live ValidAST (auto) / pre-commit (manual)
 // filter.committedValid  — what the URL / list-fetch should observe
 // filter.errors          — ValidationError[]
-// filter.dropped         — Nodes dropped while reading the URL, with the reason
+// filter.dropped         — Nodes dropped while reading the URL (or on a schema switch), with the reason
 // filter.search.setQuery(fieldKey, q) — drive id autocomplete
 // filter.actions.{addCondition, updateNode, removeNode, clear, ...}
 // filter.fieldGroups     — fields in the schema's `groups`, for a field picker
@@ -116,6 +116,12 @@ const filter = useFilter({
 **Field groups.** Give fields a `group` and declare `groups: { key: { label,
 order } }` on the schema; `<FilterPanel>` then shows one `<optgroup>` per group
 (ungrouped fields last, no headings when there is only one group).
+
+**Schemas that load or change.** Pass `schema` as a ref to load it later or to
+switch it (say, per role with `omitFields`). While the ref is `undefined`,
+nothing is read or overwritten; the first schema reads the URL and the saved
+draft. A switch removes conditions on fields the new schema lacks, reports
+them in `filter.dropped` and keeps other uncommitted edits.
 
 **Saved presets.** `usePresets({ filter, storage })` saves the committed filter
 as `{ id, name, version, ast }` and applies it back through the schema's

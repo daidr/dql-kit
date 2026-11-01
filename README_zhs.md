@@ -106,7 +106,7 @@ const filter = useFilter({
 // filter.valid           —— 实时 ValidAST（auto 模式 / manual 模式 commit 前）
 // filter.committedValid  —— URL / 列表查询应观察的值
 // filter.errors          —— ValidationError[]
-// filter.dropped         —— 读取 URL 时被丢弃的节点及原因
+// filter.dropped         —— 读取 URL（或切换 schema）时被丢弃的节点及原因
 // filter.search.setQuery(fieldKey, q) —— 驱动 id 自动补全
 // filter.actions.{addCondition, updateNode, removeNode, clear, ...}
 // filter.fieldGroups     —— 按 schema 的 `groups` 分组的字段，供字段选择器使用
@@ -116,6 +116,11 @@ const filter = useFilter({
 **字段分组。** 给字段设置 `group`，并在 schema 上声明 `groups: { key: { label,
 order } }`，`<FilterPanel>` 就会为每个分组渲染一个 `<optgroup>`（未分组的字段排在
 最后；只有一个分组时不显示分组标题）。
+
+**异步加载或切换 schema。** 把 `schema` 作为 ref 传入，就可以稍后再加载，或者在运行时
+切换（例如用 `omitFields` 按角色切换）。ref 为 `undefined` 时不会读取或覆盖任何状态；
+拿到第一个 schema 时才读取 URL 和保存的草稿。切换 schema 时，新 schema 中不存在的字段上的
+条件会被移除并记入 `filter.dropped`，其他未提交的修改保持不变。
 
 **保存的预设。** `usePresets({ filter, storage })` 把已提交的筛选保存为
 `{ id, name, version, ast }`，应用时会先经过 schema 的 migrations；不再有效的条件会
