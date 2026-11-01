@@ -91,6 +91,13 @@ export type UseFilterOptions<S extends FilterSchema = FilterSchema> = {
    */
   persistDraft?: 'session' | 'none'
   /**
+   * Recently picked ids per id field, offered when the search box is
+   * empty. `limit` (default 8, 0 turns it off) caps each field's list;
+   * `persist: 'session'` keeps the lists in sessionStorage under the
+   * `queryKey`.
+   */
+  recentIds?: { limit?: number, persist?: 'session' | 'none' }
+  /**
    * Collapse redundant nesting after every action: a group whose only
    * child is another group is replaced by that child (root included).
    * Off by default.
@@ -109,8 +116,15 @@ export type SearchSlot<ID = string | number> = {
   loading: boolean
   error: Error | null
   results: Item<ID>[]
+  /** More results can be loaded (fetchers with `searchPage`). */
+  hasMore: boolean
   setQuery: (fieldKey: string, query: string) => void
+  /** Append the next page of results; a no-op without `hasMore`. */
+  loadMore: () => void
 }
+
+/** Outcome of `lookupIds`: items the fetcher knows, and the raw ids it doesn't. */
+export type IdLookup<ID = string | number> = { found: Item<ID>[], missing: string[] }
 
 export type FilterActions = {
   addCondition: (parentPath: number[], condition?: Partial<{ field: string, op: string, value: unknown }>) => void
@@ -185,6 +199,17 @@ export type UseFilterReturn<S extends FilterSchema = FilterSchema> = {
   applyAst(ast: ValidAST<S>): void
   toJSON: () => ValidAST<S>
   invalidateLabels: (fieldKey?: string) => void
+  /** Recently picked ids of an id field, newest first. Reactive. */
+  recentIds: (fieldKey: string) => (string | number)[]
+  /** Record ids as picked (the id inputs call this on selection). */
+  rememberIds: (fieldKey: string, ids: (string | number)[]) => void
+  /**
+   * Look up raw ids (e.g. pasted text, already split) through the
+   * field's `resolve`. Found items also fill the label cache; `missing`
+   * lists the raw ids the fetcher didn't return. Matching is on
+   * `String(item.id)`.
+   */
+  lookupIds: (fieldKey: string, rawIds: string[]) => Promise<IdLookup>
   /**
    * The schema's fields in their `groups`, sorted by `order`, with
    * ungrouped fields last (`key: null`). For field pickers.

@@ -5,8 +5,14 @@ export type AnyDrizzleTable = {
   [key: string]: AnyColumn
 } & object
 
+/**
+ * Field → column. `null` means the field has no column of its own (a
+ * related-table predicate, a search across several columns): every op
+ * on it must then have a custom handler, which receives `col` as
+ * `undefined`.
+ */
 export type ColumnMap<F extends FilterSchema['fields']> = {
-  [K in keyof F]?: AnyColumn
+  [K in keyof F]?: AnyColumn | null
 }
 
 // Context passed to op translators. Adapters can branch on field.typeId
@@ -23,7 +29,11 @@ export type OpContext = {
   now: Date
 }
 
-export type OpTranslator = (col: AnyColumn, value: unknown, ctx: OpContext) => SQL
+/**
+ * SQL for one condition. `col` is the field's column, or `undefined`
+ * for a field mapped to `null` in `columns`.
+ */
+export type OpTranslator = (col: AnyColumn | undefined, value: unknown, ctx: OpContext) => SQL
 
 /**
  * Map of op name → custom SQL translator. Keys passed here override or

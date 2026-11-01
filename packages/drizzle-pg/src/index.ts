@@ -1,5 +1,6 @@
 export { createDrizzleTranslator } from './translator.ts'
 export { drizzleOps } from './ops.ts'
+export { existsOp, notExistsOp, type SubqueryBuilder } from './exists.ts'
 export type {
   AnyDrizzleTable,
   CalendarTranslatorOptions,

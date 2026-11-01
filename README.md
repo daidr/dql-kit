@@ -113,6 +113,16 @@ const filter = useFilter({
 // filter.describe(ast?)  — human-readable summary (default: committedValid)
 ```
 
+**Id fields.** A fetcher may give `searchPage(query, cursor, signal)` instead
+of (or besides) `search`, returning `{ items, nextCursor? }`. The first page gets
+`cursor: undefined`. Then `filter.search` has `hasMore` and `loadMore()`, and
+the built-in id inputs show a "Load more" row. Picked ids are kept per field
+(`recentIds: { limit: 8, persist: 'session' }`) and offered while the search
+box is empty. Pasting a list (commas, semicolons, spaces or new lines) into the
+multi-id input looks the ids up through `resolve`, which gets them as strings.
+The ids it returns are added, up to the list limit, and the rest are listed as
+not found. Texts are set with `createDqlKit({ idInputLabels })`.
+
 **Field groups.** Give fields a `group` and declare `groups: { key: { label,
 order } }` on the schema; `<FilterPanel>` then shows one `<optgroup>` per group
 (ungrouped fields last, no headings when there is only one group).
@@ -160,7 +170,7 @@ const translator = createDrizzleTranslator({
     authorId: table.articles.authorId,
     publishedAt: table.articles.publishedAt,
     tags: table.articles.tags,
-    keyword: table.articles.title,  // placeholder; overridden by ops below
+    keyword: null,  // no column of its own: handled by the `contains` op below
   },
   // Custom op handlers passed at construction — no mutating `registerOp`.
   ops: {
@@ -241,6 +251,32 @@ plain days and are not shifted. Bounds are computed in JS and sent as
 parameters, so daylight-saving days have their real length (23 or 25 hours)
 and the database session zone doesn't matter. `now()` pins the clock for these
 bounds. Give `createMatcher` the same `timeZone` and `weekStartsOn`.
+
+**Related rows.** `existsOp(build)` turns a subquery into `EXISTS (…)`, and
+`notExistsOp` into `NOT EXISTS (…)`, for filters such as "has a comment
+containing X". Give the field a custom op and map it to `null`:
+
+```ts
+import { existsOp } from '@dql-kit/drizzle-pg'
+
+// schema
+const anyCommentContains = defineOp('anyCommentContains', 'single', 'Any comment contains')
+comments: f.custom({ typeId: 'relation', delegateTo: 'string', ops: [anyCommentContains] }),
+
+// translator
+columns: { /* … */ comments: null },
+ops: {
+  anyCommentContains: existsOp((v) =>
+    db.select({ one: sql`1` }).from(table.comments).where(and(
+      eq(table.comments.articleId, table.articles.id),
+      ilike(table.comments.body, `%${String(v)}%`),
+    ))),
+},
+```
+
+A field mapped to `null` needs a custom handler for each of its ops (checked
+when the translator is built), and those handlers get `col` as `undefined`.
+`delegateTo: 'string'` gives the field a text input in the UI.
 
 **Negated ops keep NULL rows.** `neq`, `notIn` and `notContains` match rows
 whose column is NULL ("status is not draft" includes rows with no status),

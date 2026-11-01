@@ -29,6 +29,8 @@ import {
 } from 'drizzle-orm'
 import type { OpContext, OpTranslator } from './types.ts'
 
+type ColumnOp = (col: AnyColumn, value: unknown, ctx: OpContext) => SQL
+
 const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`)
 
 // Resolve the *effective* type for op-handler dispatch. A custom typeId
@@ -187,7 +189,7 @@ const isEmptySql = (col: AnyColumn, field: FieldDef): SQL => {
   return isNull(col)
 }
 
-export const drizzleOps: Record<string, OpTranslator> = {
+const columnOps: Record<string, ColumnOp> = {
   eq:           (col, v, ctx) => eqSql(col, v, ctx),
   neq:          (col, v, ctx) => orNull(col, sql`NOT (${eqSql(col, v, ctx)})`),
   in:           (col, v, ctx) => inSql(col, v, ctx),
@@ -266,6 +268,25 @@ export const drizzleOps: Record<string, OpTranslator> = {
     return arrayOverlaps(col, arr as never[])
   },
 }
+
+// The built-in handlers all need a column. A field mapped to `null` in
+// `columns` must have a custom handler for every op (checked when the
+// translator is built); this guard covers a custom handler that hands
+// such a field on to a built-in one.
+export const drizzleOps: Record<string, OpTranslator> = Object.fromEntries(
+  Object.entries(columnOps).map(([name, fn]): [string, OpTranslator] => [
+    name,
+    (col, v, ctx) => {
+      if (!col) {
+        throw new Error(
+          `[dql-kit/drizzle-pg] Built-in op "${name}" needs a column, but this field is mapped to null. `
+            + 'Handle it in a custom op instead.',
+        )
+      }
+      return fn(col, v, ctx)
+    },
+  ]),
+)
 
 export const passthrough = { andSql, orSql, isNotNull } as Record<string, unknown>
 export type { SQL }

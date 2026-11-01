@@ -570,7 +570,10 @@ layer or a later phase, with API hooks already preserved:
 ## Open questions for post-day-1
 
 - Aggregations (HAVING-style filters)?
-- Cross-row predicates (e.g., "articles with at least one comment containing X")?
+- ~~Cross-row predicates (e.g., "articles with at least one comment containing X")?~~
+  **Resolved**: a custom op on a field mapped to `null` in `columns`, with
+  `existsOp` / `notExistsOp` from the Drizzle adapter wrapping a correlated
+  subquery. No new field type: the schema side is `f.custom({ delegateTo })`.
 - ~~Field-level permissions (hide some fields per user role)?~~ **Resolved**:
   `pickFields` / `omitFields` build a per-role sub-schema. The server parses
   with it and translates with the full-schema translator (a `CheckedAST` of a
