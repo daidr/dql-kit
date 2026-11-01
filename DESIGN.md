@@ -552,8 +552,16 @@ layer or a later phase, with API hooks already preserved:
 - `bigint` / `decimal` / `json` / `duration` / `range` field types → use `f.custom`.
 - Tuple-N value shapes (N ≥ 3) → `between` is the only common pair op.
 - Saved filter UI / persistence → application layer; primitives provided.
-- Async schema (`Schema | Promise<Schema>`) → signature accepts the union but
-  reconciliation logic ships in a later phase.
+- ~~Async schema (`Schema | Promise<Schema>`) → signature accepts the union but
+  reconciliation logic ships in a later phase.~~ **Superseded**: `useFilter`
+  takes `S | Ref<S | undefined>` (load the schema into the ref; no Promise
+  form) and reconciles on change. While the ref is `undefined` the committed
+  filter, the URL and the saved draft are left alone; the first schema reads
+  the URL and the saved draft as at creation. Switching schemas removes
+  conditions on fields the new one lacks (renaming via `aliases`) from the
+  draft and the committed filter, reports the committed ones in `dropped`,
+  keeps other uncommitted edits, and drops id labels of removed or redefined
+  fields.
 - Multi-search-slot UI (editing many id fields concurrently) → single-slot
   matches typical popover/dialog UX.
 - Search result caching → users wrap own fetcher.
@@ -563,7 +571,13 @@ layer or a later phase, with API hooks already preserved:
 
 - Aggregations (HAVING-style filters)?
 - Cross-row predicates (e.g., "articles with at least one comment containing X")?
-- Field-level permissions (hide some fields per user role)?
+- ~~Field-level permissions (hide some fields per user role)?~~ **Resolved**:
+  `pickFields` / `omitFields` build a per-role sub-schema. The server parses
+  with it and translates with the full-schema translator (a `CheckedAST` of a
+  field subset is a `CheckedAST` of the full schema); the front end renders
+  the same sub-schema. Out-of-role fields are rejected as `unknown_field`, the
+  same as fields that don't exist, so a request reveals nothing about fields
+  outside the role.
 
 Resolved: server-side parsing is `parseAst` (see Q10).
 

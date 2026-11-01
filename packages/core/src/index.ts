@@ -22,6 +22,7 @@ export {
 export { COMPACT_KEYS, toUrl, fromUrl } from './url.ts'
 export { parseAst, restoreAst, DEFAULT_AST_LIMITS, type ParseOptions } from './parse.ts'
 export { migrateAst, schemaVersion } from './migrate.ts'
+export { omitFields, pickFields } from './subset.ts'
 export {
   DATE_RELATIVE_UNITS,
   RELATIVE_UNITS,

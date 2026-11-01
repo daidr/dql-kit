@@ -106,7 +106,7 @@ const filter = useFilter({
 // filter.valid           — live ValidAST (auto) / pre-commit (manual)
 // filter.committedValid  — what the URL / list-fetch should observe
 // filter.errors          — ValidationError[]
-// filter.dropped         — Nodes dropped while reading the URL, with the reason
+// filter.dropped         — Nodes dropped while reading the URL (or on a schema switch), with the reason
 // filter.search.setQuery(fieldKey, q) — drive id autocomplete
 // filter.actions.{addCondition, updateNode, removeNode, clear, ...}
 // filter.fieldGroups     — fields in the schema's `groups`, for a field picker
@@ -116,6 +116,12 @@ const filter = useFilter({
 **Field groups.** Give fields a `group` and declare `groups: { key: { label,
 order } }` on the schema; `<FilterPanel>` then shows one `<optgroup>` per group
 (ungrouped fields last, no headings when there is only one group).
+
+**Schemas that load or change.** Pass `schema` as a ref to load it later or to
+switch it (say, per role with `omitFields`). While the ref is `undefined`,
+nothing is read or overwritten; the first schema reads the URL and the saved
+draft. A switch removes conditions on fields the new schema lacks, reports
+them in `filter.dropped` and keeps other uncommitted edits.
 
 **Saved presets.** `usePresets({ filter, storage })` saves the committed filter
 as `{ id, name, version, ast }` and applies it back through the schema's
@@ -263,6 +269,25 @@ the schema). `fromUrl` reads bare links as version 0 and runs the remaining
 migrations; a link from a newer version is `unsupported_version`. Pass
 `{ fromVersion }` to `parseAst` for stored filters. `aliases` are read by
 `parseAst` / `fromUrl`, not listed by `toJsonSchema`.
+
+**Fields per role.** `pickFields(schema, keys)` and `omitFields(schema, keys)`
+return a schema with a subset of the fields (unused groups dropped). Parse with
+the role's schema and translate with the full one; render the same subset on
+the front end. Out-of-role fields are rejected as `unknown_field`:
+
+```ts
+import { omitFields, parseAst } from '@dql-kit/core'
+
+const forRole = (user: User) =>
+  user.isAdmin ? articleFilterSchema : omitFields(articleFilterSchema, ['authorId'])
+
+const parsed = parseAst(body.filter, forRole(user))
+if (!parsed.ok) throw new BadRequest(parsed.errors)
+const rows = await db.select().from(table.articles).where(translator.toWhere(parsed.ast))
+```
+
+Build each role's subset once at startup rather than per request: some
+lookups are cached per schema object.
 
 ### 5. Filter rows in memory
 

@@ -5,6 +5,7 @@ import {
   emptyDraft,
   fromUrl,
   isGroup,
+  restoreAst,
   toUrl,
   type DraftAST,
   type DraftCondition,
@@ -103,6 +104,42 @@ const flattenRedundantGroups = (group: DraftGroup): void => {
   }
 }
 
+const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k)
+
+/**
+ * Fit a draft to a new schema in place: conditions on a field the
+ * schema no longer has are removed (or renamed, when the field lists
+ * the old name in `aliases`), and groups emptied by that are removed
+ * too. Incomplete conditions and wrong ops / values stay, so the editor
+ * keeps showing them with their errors. Returns whether anything changed.
+ */
+const reconcileDraft = (root: DraftGroup, schema: FilterSchema): boolean => {
+  const aliases = new Map<string, string>()
+  for (const [key, def] of Object.entries(schema.fields)) {
+    for (const alias of def.aliases ?? []) if (!aliases.has(alias)) aliases.set(alias, key)
+  }
+  let changed = false
+  const visit = (group: DraftGroup): void => {
+    group.children = group.children.filter((child) => {
+      if (isGroup(child)) {
+        const g = child as DraftGroup
+        const before = g.children.length
+        visit(g)
+        return !(before > 0 && g.children.length === 0)
+      }
+      const cond = child as DraftCondition
+      if (typeof cond.field !== 'string' || hasOwn(schema.fields, cond.field)) return true
+      const target = aliases.get(cond.field)
+      changed = true
+      if (target === undefined) return false
+      cond.field = target
+      return true
+    })
+  }
+  visit(root)
+  return changed
+}
+
 // What persistDraft writes: the draft plus the committed AST it was
 // edited on top of. On restore the draft is only trusted when that base
 // still matches the URL — otherwise the user arrived via a different
@@ -197,6 +234,14 @@ export const useFilter = <S extends FilterSchema>(
 
   const computeInitialState = (): { draft: DraftAST, committedAst: ValidAST } => {
     const s = schemaRef.value
+    // No schema yet (still loading): start from `initial` and leave the
+    // URL and the saved draft alone; both are read once the schema
+    // arrives (see the schema watcher below).
+    if (!s) {
+      return opts.initial
+        ? { draft: cloneDraft(opts.initial) as DraftAST, committedAst: cloneDraft(opts.initial) }
+        : { draft: emptyDraft(), committedAst: emptyAst() }
+    }
     let urlAst: ValidAST | undefined
     if (urlAdapter && s) {
       const raw = urlAdapter.read()
@@ -212,11 +257,11 @@ export const useFilter = <S extends FilterSchema>(
       if (!urlAdapter) {
         return {
           draft: persisted.draft,
-          committedAst: s ? analyze(cloneDraft(persisted.base) as DraftAST, s).ast : emptyAst(),
+          committedAst: analyze(cloneDraft(persisted.base) as DraftAST, s).ast,
         }
       }
       const committedAst = urlAst ?? (opts.initial ? cloneDraft(opts.initial) : emptyAst())
-      if (s && astEqual(analyze(cloneDraft(persisted.base) as DraftAST, s).ast, committedAst)) {
+      if (astEqual(analyze(cloneDraft(persisted.base) as DraftAST, s).ast, committedAst)) {
         return { draft: persisted.draft, committedAst }
       }
       clearPersistedDraft()
@@ -556,9 +601,45 @@ export const useFilter = <S extends FilterSchema>(
     // see edits flow through immediately.
     if (commitMode === 'auto') {
       watch(valid, (v) => {
+        // While the schema is unset `valid` is empty; don't let that
+        // wipe the committed filter (and the URL) before it is back.
+        if (!schemaRef.value) return
         committedValidRef.value = cloneDraft(toRaw(v)) as ValidAST
       })
     }
+
+    // Schema changes (async load, role switch). `sync` so the state is
+    // reconciled before the commit mirror and URL writer react to the
+    // new `valid`.
+    watch(schemaRef, (next, prev) => {
+      if (!next || next === prev) return
+      if (!prev) {
+        // First schema: do what useFilter would have done with it at
+        // creation (read the URL, restore the saved draft).
+        const state = computeInitialState()
+        draft.value = state.draft
+        committedValidRef.value = state.committedAst
+        return
+      }
+      // Id labels of fields that are gone or redefined may be stale.
+      let invalidated = false
+      for (const [key, def] of Object.entries(prev.fields)) {
+        if (def.typeId === 'id' && next.fields[key] !== def) {
+          orchestrator.invalidateLabels(key)
+          invalidated = true
+        }
+      }
+      if (search.value.fieldKey !== null && !hasOwn(next.fields, search.value.fieldKey)) {
+        orchestrator.resetSearch()
+        search.value = { ...search.value, fieldKey: null, query: '', loading: false, error: null, results: [] }
+      }
+      const nextDraft = cloneDraft(toRaw(draft.value))
+      if (reconcileDraft(nextDraft, next)) draft.value = nextDraft
+      const { ast, dropped: d } = restoreAst(cloneDraft(toRaw(committedValidRef.value)), next)
+      if (d.length > 0) dropped.value = d
+      if (!astEqual(ast, committedValidRef.value)) committedValidRef.value = ast
+      if (invalidated) eagerResolve(valid.value)
+    }, { flush: 'sync' })
 
     // Eager resolve — fires once on mount and on every valid change so
     // labels for new id values fetch right away.
