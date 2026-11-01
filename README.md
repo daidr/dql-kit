@@ -175,10 +175,16 @@ app.post('/articles/query', handler, {
 **PostgreSQL only.** The built-in op handlers emit PG-specific SQL (`ILIKE`,
 `= ANY(col)`, `@>`, `cardinality`, `NOW() - INTERVAL`).
 
-**`date` fields compare in UTC days.** `'2024-01-01'` becomes midnight UTC. On
-a PG `date` column that's exact; on a `timestamp` column, `eq` / `before` /
-`after` / `between` cut days at UTC midnight. Map `date` fields to `date`
-columns, or use `datetime` when the local day matters.
+**`date` fields compare whole UTC days.** `eq '2024-01-31'` becomes
+`col >= 2024-01-31 AND col < 2024-02-01`, and `between` keeps all of its last
+day, so a `date` field gives the same rows on a PG `date` column and on a
+`timestamp` column. Days start at UTC midnight; use `datetime` when the
+viewer's local day matters.
+
+**Negated ops keep NULL rows.** `neq`, `notIn` and `notContains` match rows
+whose column is NULL ("status is not draft" includes rows with no status),
+the same way `notEmpty` treats NULL as empty. See "Op semantics" in
+[DESIGN.md](./DESIGN.md) for every op.
 
 ### 5. Typed ASTs
 

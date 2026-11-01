@@ -173,10 +173,14 @@ app.post('/articles/query', handler, {
 **仅支持 PostgreSQL。** 内置 op 生成的是 PG 专有 SQL（`ILIKE`、`= ANY(col)`、
 `@>`、`cardinality`、`NOW() - INTERVAL`）。
 
-**`date` 字段按 UTC 日期比较。** `'2024-01-01'` 会变成 UTC 零点。映射到 PG
-`date` 列时是精确的；映射到 `timestamp` 列时，`eq` / `before` / `after` /
-`between` 按 UTC 零点切天。`date` 字段请映射到 `date` 列，需要本地日期语义时用
-`datetime`。
+**`date` 字段按整天（UTC）比较。** `eq '2024-01-31'` 会生成
+`col >= 2024-01-31 AND col < 2024-02-01`，`between` 会包含最后一整天，因此
+`date` 字段映射到 PG `date` 列和 `timestamp` 列得到的结果相同。一天从 UTC 零点
+开始；需要按查看者本地日期判断时用 `datetime`。
+
+**否定类 op 保留 NULL 行。** `neq`、`notIn`、`notContains` 会匹配列为 NULL 的
+行（“状态不是草稿”包含没有状态的行），与 `notEmpty` 把 NULL 视为空的做法一致。
+每个 op 的完整语义见 [DESIGN.md](./DESIGN.md) 的 “Op semantics”。
 
 ### 5. 类型化 AST
 

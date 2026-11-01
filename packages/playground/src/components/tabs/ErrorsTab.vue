@@ -22,6 +22,8 @@ const messageOf = (e: ParseError): string => {
       return `值形状不匹配：${e.op} 期望 ${e.expected}`
     case 'incomplete':
       return `缺少 ${e.missing}`
+    case 'invalid_range':
+      return `${e.op} 的下界大于上界`
     case 'invalid_node':
       return `节点格式错误：${e.message}`
     case 'parse_error':

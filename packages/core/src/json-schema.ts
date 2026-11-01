@@ -1,4 +1,4 @@
-import { RELATIVE_UNITS } from './check.ts'
+import { DATE_PATTERN, DATETIME_PATTERN, RELATIVE_UNITS } from './check.ts'
 import { resolveLimits } from './parse.ts'
 import type { AstLimits, FieldDef, FilterSchema, ValueShape } from './types.ts'
 
@@ -28,8 +28,6 @@ export type JsonSchemaObject = {
   exclusiveMinimum?: number
 }
 
-const DATE_PATTERN = '^\\d{4}-\\d{2}-\\d{2}$'
-
 // Mirrors `checkPrimitive` in check.ts. `true` = unconstrained, used for
 // custom typeIds without `delegateTo` (and an `array` field missing its
 // itemType), which `checkPrimitive` also lets through.
@@ -49,9 +47,10 @@ const elementSchema = (field: FieldDef): JsonSchema => {
     case 'date':
       return { type: 'string', pattern: DATE_PATTERN }
     case 'datetime':
-      // `Date.parse` accepts more than any pattern could describe;
-      // parseability is left to `parseAst`.
-      return { type: 'string' }
+      // The pattern fixes the layout; whether the day and time exist
+      // (`2024-02-31`, `25:00`) is left to `parseAst`. The same holds
+      // for `date`.
+      return { type: 'string', pattern: DATETIME_PATTERN }
     case 'id':
       return { anyOf: [{ type: 'string' }, { type: 'number' }] }
     default:
@@ -85,7 +84,7 @@ const valueSchema = (
     case 'pair':
       return { type: 'array', prefixItems: [element, element], minItems: 2, maxItems: 2 }
     case 'list':
-      return { type: 'array', items: element, maxItems: limits.maxListLength }
+      return { type: 'array', items: element, minItems: 1, maxItems: limits.maxListLength }
     case 'relative':
       return {
         type: 'object',

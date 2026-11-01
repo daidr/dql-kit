@@ -273,12 +273,12 @@ describe('prune', () => {
     expect(prune(draft, schema).children).toHaveLength(0)
   })
 
-  test('string in keeps an empty array (well-formed list shape)', () => {
+  test('string in drops an empty array (nothing picked yet)', () => {
     const draft: DraftAST = {
       combinator: 'and',
       children: [{ field: 'title', op: 'in', value: [] }],
     }
-    expect(prune(draft, schema).children).toHaveLength(1)
+    expect(prune(draft, schema).children).toHaveLength(0)
   })
 
   test.each([
@@ -591,12 +591,12 @@ describe('prune', () => {
     expect(prune(draft, schema).children).toHaveLength(1)
   })
 
-  test('array<number> containsAll with empty array is kept (well-formed list)', () => {
+  test('array<number> containsAll with empty array is dropped', () => {
     const draft: DraftAST = {
       combinator: 'and',
       children: [{ field: 'intTags', op: 'containsAll', value: [] }],
     }
-    expect(prune(draft, schema).children).toHaveLength(1)
+    expect(prune(draft, schema).children).toHaveLength(0)
   })
 
   // Slice 9: deeper flattening invariants over multi-level fixtures.

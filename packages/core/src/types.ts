@@ -169,6 +169,7 @@ export type ValidationError =
   | { path: NodePath, code: 'value_type_mismatch', expected: string, got: string }
   | { path: NodePath, code: 'value_shape_mismatch', op: string, expected: ValueShape }
   | { path: NodePath, code: 'incomplete', missing: 'field' | 'op' | 'value' }
+  | { path: NodePath, code: 'invalid_range', op: string }
 
 /**
  * Everything `parseAst` / `fromUrl` can report: the draft-level

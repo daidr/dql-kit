@@ -119,7 +119,10 @@ describe('toJsonSchema', () => {
         if (result.ok) continue
         for (const e of result.errors) {
           const expressible = !(
-            (e.code === 'value_type_mismatch' && e.expected === 'datetime')
+            // Patterns can't tell whether a day or time exists, or
+            // compare a pair's bounds.
+            (e.code === 'value_type_mismatch' && (e.expected === 'datetime' || e.expected === 'date'))
+            || e.code === 'invalid_range'
             || (e.code === 'limit_exceeded' && e.limit === 'maxNodes')
           )
           if (expressible) throw new Error(`${JSON.stringify(e)} in ${JSON.stringify(ast)}`)
