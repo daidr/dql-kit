@@ -214,3 +214,95 @@ export const semanticsCases: SemanticsCase[] = [
 /** Wrap a case's node in a root group, as `parseAst` expects. */
 export const rootOf = (node: Node) =>
   'combinator' in node ? node : { combinator: 'and' as const, children: [node] }
+
+// ---------------------------------------------------------------------------
+// Calendar cases: time zones, daylight-saving days and calendar periods.
+// Bounds for these ops are computed in JS from a clock both sides share,
+// so each case pins its own `now` and the rows are fixed instants.
+
+export const calendarSchema = defineFilterSchema({
+  fields: {
+    /** Instant. */
+    at: f.datetime({ nullable: true }),
+    /** Calendar day stored as an instant (a timestamp column). */
+    stamp: f.date({ nullable: true }),
+    /** Calendar day stored as a plain day (a PG `date` column). */
+    day: f.date({ nullable: true }),
+  },
+})
+
+export type CalendarRow = { id: number, at: string | null, stamp: string | null, day: string | null }
+
+// America/New_York: DST starts 2024-03-10 02:00 (a 23-hour day) and ends
+// 2024-11-03 02:00 (a 25-hour day). `day` is each instant's local day.
+const nyRow = (id: number, at: string, day: string): CalendarRow => ({ id, at, stamp: at, day })
+export const calendarRows: CalendarRow[] = [
+  nyRow(1, '2024-03-10T04:59:59Z', '2024-03-09'), // Sat 23:59:59 EST
+  nyRow(2, '2024-03-10T05:00:00Z', '2024-03-10'), // Sun 00:00 EST
+  nyRow(3, '2024-03-11T03:59:59Z', '2024-03-10'), // Sun 23:59:59 EDT
+  nyRow(4, '2024-03-11T04:00:00Z', '2024-03-11'), // Mon 00:00 EDT
+  nyRow(5, '2024-11-03T04:00:00Z', '2024-11-03'), // Sun 00:00 EDT
+  nyRow(6, '2024-11-04T04:59:59Z', '2024-11-03'), // Sun 23:59:59 EST
+  nyRow(7, '2024-11-04T05:00:00Z', '2024-11-04'), // Mon 00:00 EST
+  { id: 8, at: null, stamp: null, day: null },
+]
+
+export type CalendarCase = SemanticsCase & {
+  now: string
+  timeZone?: string
+  weekStartsOn?: 0 | 1 | 2 | 3 | 4 | 5 | 6
+}
+
+const NY = 'America/New_York'
+const MAR10 = '2024-03-10T12:00:00Z' // Sun 08:00 EDT
+const NOV3 = '2024-11-03T15:00:00Z' // Sun 10:00 EST
+const period = (field: string, unit: string, offset: number): Cond =>
+  ({ field, op: 'inPeriod', value: { unit, offset } })
+const cal = (
+  name: string,
+  node: Node,
+  expected: number[],
+  opts: { now: string, timeZone?: string, weekStartsOn?: CalendarCase['weekStartsOn'] },
+): CalendarCase => ({ name, node, expected, ...opts })
+
+export const calendarCases: CalendarCase[] = [
+  // inPeriod on instants
+  cal('today in UTC by default', period('at', 'day', 0), [1, 2], { now: MAR10 }),
+  cal('today on a 23-hour day', period('at', 'day', 0), [2, 3], { now: MAR10, timeZone: NY }),
+  cal('yesterday across the DST change', period('at', 'day', -1), [1], { now: MAR10, timeZone: NY }),
+  cal('tomorrow across the DST change', period('at', 'day', 1), [4], { now: MAR10, timeZone: NY }),
+  cal('today on a 25-hour day', period('at', 'day', 0), [5, 6], { now: NOV3, timeZone: NY }),
+  cal('week starts on Monday by default', period('at', 'week', 0), [1, 2, 3], { now: MAR10, timeZone: NY }),
+  cal('week starting on Sunday', period('at', 'week', 0), [2, 3, 4], { now: MAR10, timeZone: NY, weekStartsOn: 0 }),
+  cal('last week', period('at', 'week', -1), [], { now: MAR10, timeZone: NY }),
+  cal('this month', period('at', 'month', 0), [1, 2, 3, 4], { now: MAR10, timeZone: NY }),
+  cal('last month', period('at', 'month', -1), [], { now: MAR10, timeZone: NY }),
+  cal('month eight ahead', period('at', 'month', 8), [5, 6, 7], { now: MAR10, timeZone: NY }),
+  cal('this quarter', period('at', 'quarter', 0), [1, 2, 3, 4], { now: MAR10, timeZone: NY }),
+  cal('quarter three ahead', period('at', 'quarter', 3), [5, 6, 7], { now: MAR10, timeZone: NY }),
+  cal('this year', period('at', 'year', 0), [1, 2, 3, 4, 5, 6, 7], { now: MAR10, timeZone: NY }),
+  cal('last year', period('at', 'year', -1), [], { now: MAR10, timeZone: NY }),
+
+  // date fields stored as instants: days start at local midnight
+  cal('stamp eq a 23-hour day', { field: 'stamp', op: 'eq', value: '2024-03-10' }, [2, 3], { now: MAR10, timeZone: NY }),
+  cal('stamp eq in UTC', { field: 'stamp', op: 'eq', value: '2024-03-10' }, [1, 2], { now: MAR10 }),
+  cal('stamp eq in UTC+8', { field: 'stamp', op: 'eq', value: '2024-03-10' }, [1, 2], { now: MAR10, timeZone: 'Asia/Shanghai' }),
+  cal('stamp before', { field: 'stamp', op: 'before', value: '2024-03-10' }, [1], { now: MAR10, timeZone: NY }),
+  cal('stamp after', { field: 'stamp', op: 'after', value: '2024-03-10' }, [4, 5, 6, 7], { now: MAR10, timeZone: NY }),
+  cal('stamp onOrBefore', { field: 'stamp', op: 'onOrBefore', value: '2024-03-10' }, [1, 2, 3], { now: MAR10, timeZone: NY }),
+  cal('stamp onOrAfter', { field: 'stamp', op: 'onOrAfter', value: '2024-03-10' }, [2, 3, 4, 5, 6, 7], { now: MAR10, timeZone: NY }),
+  cal('stamp between a 25-hour day', { field: 'stamp', op: 'between', value: ['2024-11-03', '2024-11-03'] }, [5, 6], { now: NOV3, timeZone: NY }),
+  cal('stamp today', period('stamp', 'day', 0), [2, 3], { now: MAR10, timeZone: NY }),
+
+  // plain days are not shifted by the zone
+  cal('day eq ignores the zone', { field: 'day', op: 'eq', value: '2024-03-10' }, [2, 3], { now: MAR10, timeZone: 'Asia/Shanghai' }),
+  cal('day this week', period('day', 'week', 0), [1, 2, 3], { now: MAR10, timeZone: NY }),
+  cal('day this month', period('day', 'month', 0), [1, 2, 3, 4], { now: MAR10, timeZone: NY }),
+  // 2024-03-11T02:00Z is still Sunday 2024-03-10 in New York.
+  cal('relative date today in the zone', { field: 'day', op: 'inNext', value: { amount: 1, unit: 'day' } }, [2, 3, 4], {
+    now: '2024-03-11T02:00:00Z', timeZone: NY,
+  }),
+  cal('relative date today in UTC', { field: 'day', op: 'inNext', value: { amount: 1, unit: 'day' } }, [4], {
+    now: '2024-03-11T02:00:00Z',
+  }),
+]

@@ -70,6 +70,8 @@ const dqlKit = createDqlKit({
   // 需要响应式 i18n 时传 thunk（如 () => i18n.global.t('dql.op.eq')）。
   opLabels: { eq: '等于', neq: '不等于', contains: '包含', /* ... */ },
   relativeUnitLabels: { day: '天', week: '周', month: '月' },
+  // inPeriod 输入框：本 / 上一 / 下一 / 自定义偏移，以及各单位。
+  periodLabels: { current: '本', previous: '上一', next: '下一', month: '月', quarter: '季度' },
   // 覆盖内置渲染器或为自定义 typeId 注册组件。
   renderers: { fulltext: { default: MyFulltextInput } },
 })
@@ -181,10 +183,30 @@ app.post('/articles/query', handler, {
 **可空字段。** `f.number({ nullable: true })`（除 `array` 外的所有构造器都支持）
 会追加 `isEmpty` / `notEmpty`，翻译为 `IS NULL` / `IS NOT NULL`。
 
-**`date` 字段按整天（UTC）比较。** `eq '2024-01-31'` 会生成
+**`date` 字段按整天比较。** `eq '2024-01-31'` 会生成
 `col >= 2024-01-31 AND col < 2024-02-01`，`between` 会包含最后一整天，因此
-`date` 字段映射到 PG `date` 列和 `timestamp` 列得到的结果相同。一天从 UTC 零点
-开始；需要按查看者本地日期判断时用 `datetime`。
+`date` 字段映射到 PG `date` 列和 `timestamp` 列得到的结果相同。未指定时区时，
+一天从 UTC 零点开始（见下文）。
+
+**时区与日历周期。** `inPeriod`（适用于 `date` 和 `datetime` 字段）匹配今天所在的
+日历周期：`{ unit: 'month', offset: 0 }` 是本月，`{ unit: 'week', offset: -1 }`
+是上周。单位有 `day`、`week`、`month`、`quarter`、`year`。传入一天开始的时区，
+也可以指定一周的第一天：
+
+```ts
+const translator = createDrizzleTranslator({
+  schema: articleFilterSchema,
+  table: articles,
+  timeZone: 'Asia/Shanghai',  // IANA 名称，默认 UTC
+  weekStartsOn: 1,            // 0 = 周日 … 6，默认周一
+})
+```
+
+时区决定 `inPeriod` 的边界、`date` 字段相对时间 op 里的“今天”，以及 `date`
+字段在 timestamp 列上的比较；PG `date` 列存的是纯日期，不做偏移。边界在 JS 中
+计算后以参数传入，所以夏令时切换当天按真实长度（23 或 25 小时）计算，也不受
+数据库会话时区影响。`now()` 可以固定计算边界用的时钟。`createMatcher` 请传入相同的
+`timeZone` 和 `weekStartsOn`。
 
 **否定类 op 保留 NULL 行。** `neq`、`notIn`、`notContains` 会匹配列为 NULL 的
 行（“状态不是草稿”包含没有状态的行），与 `notEmpty` 把 NULL 视为空的做法一致。
@@ -207,8 +229,11 @@ if (parsed.ok) {
 
 行数据按数据库驱动返回的形式读取：`null` / `undefined` 视为 NULL，`date` /
 `datetime` 的值可以是 `Date` 对象或 ISO 字符串。可选项：`get(row, fieldKey)`
-读取其他结构的行，`now()` 固定 `inLast` 使用的时钟，`ops` 注册自定义 op 的求值
-函数（对应翻译器的 `ops`）。
+读取其他结构的行，`now()` 固定相对时间 op 和 `inPeriod` 使用的时钟，
+`timeZone` / `weekStartsOn` 与翻译器相同，`ops` 注册自定义 op 的求值函数（对应
+翻译器的 `ops`）。`date` 字段的值如果是 `YYYY-MM-DD` 字符串就表示那一天，其他值
+都视为时间点，按 `timeZone` 取所在的那一天；使用非 UTC 时区时，PG `date` 列请以
+字符串形式读取（`mode: 'string'`），不要读成 UTC 零点的 `Date`。
 
 ### 6. 类型化 AST
 

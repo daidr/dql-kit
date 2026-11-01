@@ -15,7 +15,7 @@ const result = computed(() => {
   const parsed = parseAst(store.filter.value.valid.value, schema.value)
   if (!parsed.ok) return { ok: false as const, error: JSON.stringify(parsed.errors, null, 2) }
   try {
-    const matcher = createMatcher({ schema: schema.value })
+    const matcher = createMatcher({ schema: schema.value, timeZone: store.config.value.timeZone })
     const ids = new Set(matcher.filter(parsed.ast, rows.value).map((r) => r.id))
     return { ok: true as const, ids }
   } catch (err) {

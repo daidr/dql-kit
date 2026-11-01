@@ -1,4 +1,12 @@
-import { isRelativeUnit, relativeDateRange, type FieldDef, type RelativeUnit } from '@dql-kit/core'
+import {
+  isPeriodValue,
+  isRelativeUnit,
+  periodRange,
+  relativeDateRange,
+  startOfZonedDay,
+  type FieldDef,
+  type RelativeUnit,
+} from '@dql-kit/core'
 import {
   and as andSql,
   arrayContains,
@@ -19,7 +27,7 @@ import {
   type AnyColumn,
   type SQL,
 } from 'drizzle-orm'
-import type { OpTranslator } from './types.ts'
+import type { OpContext, OpTranslator } from './types.ts'
 
 const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`)
 
@@ -62,10 +70,24 @@ const coerceDateValue = (field: FieldDef, v: unknown): unknown => {
 // the result is the same, and on a `timestamp` column the whole last day
 // is kept instead of only its midnight. Only plain `date` fields (or
 // customs delegating to it) take this path; arrays and datetime don't.
+//
+// A day starts at midnight in the translator's `timeZone` on timestamp
+// columns. A PG `date` column holds plain days, so its bound is the day
+// itself (sent as UTC midnight, which PG casts back to the same day).
 const DAY_MS = 86_400_000
 const isDayField = (field: FieldDef): boolean => effectiveTypeId(field) === 'date'
-const dayStart = (v: unknown): Date => coerceDateScalar(v) as Date
-const nextDay = (v: unknown): Date => new Date(dayStart(v).getTime() + DAY_MS)
+const isPgDateColumn = (col: AnyColumn): boolean => {
+  const getType = (col as { getSQLType?: () => string }).getSQLType
+  return typeof getType === 'function' && getType.call(col) === 'date'
+}
+const addDays = (day: string, n: number): string =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10)
+const dayStart = (col: AnyColumn, day: unknown, ctx: OpContext): Date => {
+  const d = String(day).slice(0, 10)
+  return new Date(isPgDateColumn(col) ? Date.parse(`${d}T00:00:00Z`) : startOfZonedDay(d, ctx.timeZone))
+}
+const nextDay = (col: AnyColumn, day: unknown, ctx: OpContext): Date =>
+  dayStart(col, addDays(String(day).slice(0, 10), 1), ctx)
 
 // Negated ops keep NULL rows. Under SQL's three-valued logic `col <> v`
 // is NULL (so the row is dropped) when `col` is NULL, but users picking
@@ -93,21 +115,25 @@ const lowerEq = (col: AnyColumn, v: unknown): SQL => sql`lower(${col}) = lower($
 const lowerIn = (col: AnyColumn, vs: unknown[]): SQL =>
   sql`lower(${col}) IN (${sql.join(vs.map((v) => sql`lower(${String(v)})`), sql`, `)})`
 
-const eqSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
-  if (isDayField(field)) return andSql(gte(col, dayStart(v) as never), lt(col, nextDay(v) as never))!
+const dayRange = (col: AnyColumn, from: unknown, toExclusive: Date, ctx: OpContext): SQL =>
+  andSql(gte(col, dayStart(col, from, ctx) as never), lt(col, toExclusive as never))!
+
+const eqSql = (col: AnyColumn, v: unknown, ctx: OpContext): SQL => {
+  const { field } = ctx
+  if (isDayField(field)) return dayRange(col, v, nextDay(col, v, ctx), ctx)
   if (foldsCase(field)) return lowerEq(col, v)
   return eq(col, coerceDateValue(field, v) as never)
 }
-const inSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
-  if (foldsCase(field)) return lowerIn(col, v as unknown[])
-  return inArray(col, coerceDateValue(field, v) as never[])
+const inSql = (col: AnyColumn, v: unknown, ctx: OpContext): SQL => {
+  if (foldsCase(ctx.field)) return lowerIn(col, v as unknown[])
+  return inArray(col, coerceDateValue(ctx.field, v) as never[])
 }
-const betweenSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
-  if (isDayField(field)) {
+const betweenSql = (col: AnyColumn, v: unknown, ctx: OpContext): SQL => {
+  if (isDayField(ctx.field)) {
     const [a, b] = v as [unknown, unknown]
-    return andSql(gte(col, dayStart(a) as never), lt(col, nextDay(b) as never))!
+    return dayRange(col, a, nextDay(col, b, ctx), ctx)
   }
-  const [a, b] = coerceDateValue(field, v) as [unknown, unknown]
+  const [a, b] = coerceDateValue(ctx.field, v) as [unknown, unknown]
   return between(col, a as never, b as never)
 }
 
@@ -125,16 +151,30 @@ const intervalSql = (v: unknown): SQL => {
   }
   return sql.raw(`INTERVAL '${a} ${unit}'`)
 }
-// `date` fields: whole UTC days around today, computed with the same
-// helper as the in-memory evaluator and passed as parameters, so a
-// `date` and a `timestamp` column cut days the same way.
-const relativeDays = (op: 'inLast' | 'inNext', v: unknown) => {
+// `date` fields: whole days around today in the translator's zone,
+// computed with the same helper as the in-memory evaluator and passed as
+// parameters, so a `date` and a `timestamp` column cut days the same way.
+const relativeDays = (op: 'inLast' | 'inNext', v: unknown, ctx: OpContext) => {
   intervalSql(v) // validate
-  return relativeDateRange(op, v as { amount: number, unit: RelativeUnit }, new Date())
+  return relativeDateRange(op, v as { amount: number, unit: RelativeUnit }, ctx.now, { timeZone: ctx.timeZone })
 }
-const inLastSql = (col: AnyColumn, v: unknown, field: FieldDef): SQL => {
-  if (isDayField(field)) return gte(col, dayStart(relativeDays('inLast', v).from) as never)
+const inLastSql = (col: AnyColumn, v: unknown, ctx: OpContext): SQL => {
+  if (isDayField(ctx.field)) return gte(col, dayStart(col, relativeDays('inLast', v, ctx).from, ctx) as never)
   return sql`${col} >= NOW() - ${intervalSql(v)}`
+}
+// Calendar periods, `[start of from, start of to)`. Bounds are computed
+// in JS (see `periodRange`) and sent as parameters; the zone never
+// reaches the SQL text.
+const inPeriodSql = (col: AnyColumn, v: unknown, ctx: OpContext): SQL => {
+  if (!isPeriodValue(v)) {
+    throw new Error(`[dql-kit/drizzle-pg] inPeriod value must be { unit, offset }, got ${JSON.stringify(v)}`)
+  }
+  const r = periodRange(v, ctx.now, { timeZone: ctx.timeZone, weekStartsOn: ctx.weekStartsOn })
+  if (isDayField(ctx.field)) return dayRange(col, r.from, dayStart(col, r.to, ctx), ctx)
+  return andSql(
+    gte(col, new Date(startOfZonedDay(r.from, ctx.timeZone)) as never),
+    lt(col, new Date(startOfZonedDay(r.to, ctx.timeZone)) as never),
+  )!
 }
 const isEmptySql = (col: AnyColumn, field: FieldDef): SQL => {
   const t = effectiveTypeId(field)
@@ -148,10 +188,10 @@ const isEmptySql = (col: AnyColumn, field: FieldDef): SQL => {
 }
 
 export const drizzleOps: Record<string, OpTranslator> = {
-  eq:           (col, v, ctx) => eqSql(col, v, ctx.field),
-  neq:          (col, v, ctx) => orNull(col, sql`NOT (${eqSql(col, v, ctx.field)})`),
-  in:           (col, v, ctx) => inSql(col, v, ctx.field),
-  notIn:        (col, v, ctx) => orNull(col, sql`NOT (${inSql(col, v, ctx.field)})`),
+  eq:           (col, v, ctx) => eqSql(col, v, ctx),
+  neq:          (col, v, ctx) => orNull(col, sql`NOT (${eqSql(col, v, ctx)})`),
+  in:           (col, v, ctx) => inSql(col, v, ctx),
+  notIn:        (col, v, ctx) => orNull(col, sql`NOT (${inSql(col, v, ctx)})`),
   contains:     (col, v, ctx) => {
     if (effectiveTypeId(ctx.field) === 'array') {
       // PG: scalar = ANY(array_column)
@@ -177,29 +217,36 @@ export const drizzleOps: Record<string, OpTranslator> = {
   gte:          (col, v, ctx) => gte(col, coerceDateValue(ctx.field, v) as never),
   lt:           (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
   lte:          (col, v, ctx) => lte(col, coerceDateValue(ctx.field, v) as never),
-  between:      (col, v, ctx) => betweenSql(col, v, ctx.field),
-  notBetween:   (col, v, ctx) => orNull(col, sql`NOT (${betweenSql(col, v, ctx.field)})`),
-  before:       (col, v, ctx) => lt(col, coerceDateValue(ctx.field, v) as never),
+  between:      (col, v, ctx) => betweenSql(col, v, ctx),
+  notBetween:   (col, v, ctx) => orNull(col, sql`NOT (${betweenSql(col, v, ctx)})`),
+  before:       (col, v, ctx) => {
+    if (isDayField(ctx.field)) return lt(col, dayStart(col, v, ctx) as never)
+    return lt(col, coerceDateValue(ctx.field, v) as never)
+  },
   after:        (col, v, ctx) => {
-    if (isDayField(ctx.field)) return gte(col, nextDay(v) as never)
+    if (isDayField(ctx.field)) return gte(col, nextDay(col, v, ctx) as never)
     return gt(col, coerceDateValue(ctx.field, v) as never)
   },
   onOrBefore:   (col, v, ctx) => {
-    if (isDayField(ctx.field)) return lt(col, nextDay(v) as never)
+    if (isDayField(ctx.field)) return lt(col, nextDay(col, v, ctx) as never)
     return lte(col, coerceDateValue(ctx.field, v) as never)
   },
-  onOrAfter:    (col, v, ctx) => gte(col, coerceDateValue(ctx.field, v) as never),
-  inLast:       (col, v, ctx) => inLastSql(col, v, ctx.field),
+  onOrAfter:    (col, v, ctx) => {
+    if (isDayField(ctx.field)) return gte(col, dayStart(col, v, ctx) as never)
+    return gte(col, coerceDateValue(ctx.field, v) as never)
+  },
+  inLast:       (col, v, ctx) => inLastSql(col, v, ctx),
   inNext:       (col, v, ctx) => {
     if (isDayField(ctx.field)) {
-      const r = relativeDays('inNext', v)
-      return andSql(gte(col, dayStart(r.from) as never), lt(col, nextDay(r.to) as never))!
+      const r = relativeDays('inNext', v, ctx)
+      return dayRange(col, r.from, nextDay(col, r.to, ctx), ctx)
     }
     return sql`(${col} >= NOW() AND ${col} <= NOW() + ${intervalSql(v)})`
   },
   // Exact negation of inLast: NULL rows match ("not seen recently"
   // includes "never seen").
-  notInLast:    (col, v, ctx) => orNull(col, sql`NOT (${inLastSql(col, v, ctx.field)})`),
+  notInLast:    (col, v, ctx) => orNull(col, sql`NOT (${inLastSql(col, v, ctx)})`),
+  inPeriod:     (col, v, ctx) => inPeriodSql(col, v, ctx),
   // PG: array @> array — left contains every element of right (superset).
   // Use drizzle's arrayContains helper rather than inlining `@>` so the
   // parameter is encoded as a PG ARRAY literal instead of a record/tuple.

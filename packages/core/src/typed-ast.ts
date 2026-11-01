@@ -1,4 +1,5 @@
 import type { DATE_RELATIVE_UNITS, RelativeUnit } from './check.ts'
+import type { PeriodValue } from './period.ts'
 import type {
   BuiltinFieldTypeId,
   FilterSchema,
@@ -60,6 +61,7 @@ export type OpValue<Shape extends ValueShape, T> =
   : Shape extends 'pair' ? [T, T]
   : Shape extends 'list' ? T[]
   : Shape extends 'relative' ? RelativeValue
+  : Shape extends 'period' ? PeriodValue
   : never
 
 /** Field keys of a schema. `string` for the open `FilterSchema`. */

@@ -37,6 +37,8 @@ const commitOptions = [
   { value: 'manual', label: 'manual' },
 ] as const
 
+const timeZoneOptions = ['UTC', 'Asia/Shanghai', 'Europe/Berlin', 'America/New_York'] as const
+
 const localeOptions = [
   { value: 'en', label: 'English' },
   { value: 'zh', label: '中文' },
@@ -55,15 +57,20 @@ const setOpLocale = (locale: 'en' | 'zh') => {
       in: '属于', notIn: '不属于',
       between: '介于', notBetween: '不介于', before: '早于', after: '晚于',
       onOrBefore: '不晚于', onOrAfter: '不早于',
-      inLast: '最近', inNext: '未来', notInLast: '早于最近',
+      inLast: '最近', inNext: '未来', notInLast: '早于最近', inPeriod: '属于周期',
       containsAll: '全部包含', containsAny: '包含任一',
     })
     dqlKit.setRelativeUnitLabels({
       minute: '分钟', hour: '小时', day: '天', week: '周', month: '月', year: '年',
     })
+    dqlKit.setPeriodLabels({
+      current: '本', previous: '上一', next: '下一', custom: '偏移',
+      day: '天', week: '周', month: '月', quarter: '季度', year: '年',
+    })
   } else {
     dqlKit.setOpLabels({})
     dqlKit.setRelativeUnitLabels({})
+    dqlKit.setPeriodLabels({})
   }
 }
 
@@ -142,6 +149,20 @@ const filterSummary = computed(() => {
             :key="o.value"
             :value="o.value"
           >{{ o.label }}</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label class="row__label">时区</label>
+        <select
+          v-model="store.config.value.timeZone"
+          class="row__control"
+        >
+          <option
+            v-for="tz in timeZoneOptions"
+            :key="tz"
+            :value="tz"
+          >{{ tz }}</option>
         </select>
       </div>
 

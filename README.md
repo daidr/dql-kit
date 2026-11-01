@@ -70,6 +70,8 @@ const dqlKit = createDqlKit({
   // reactive i18n (e.g. () => i18n.global.t('dql.op.eq')).
   opLabels: { eq: '等于', neq: '不等于', contains: '包含', /* ... */ },
   relativeUnitLabels: { day: '天', week: '周', month: '月' },
+  // inPeriod input: this / previous / next / custom offset, and the units.
+  periodLabels: { current: '本', previous: '上一', next: '下一', month: '月', quarter: '季度' },
   // Override built-in renderers or register custom typeId components.
   renderers: { fulltext: { default: MyFulltextInput } },
 })
@@ -184,11 +186,33 @@ use a plain index; otherwise index `lower(col)` if you filter on it often.
 except `array`) adds `isEmpty` / `notEmpty`, which translate to `IS NULL` /
 `IS NOT NULL`.
 
-**`date` fields compare whole UTC days.** `eq '2024-01-31'` becomes
+**`date` fields compare whole days.** `eq '2024-01-31'` becomes
 `col >= 2024-01-31 AND col < 2024-02-01`, and `between` keeps all of its last
 day, so a `date` field gives the same rows on a PG `date` column and on a
-`timestamp` column. Days start at UTC midnight; use `datetime` when the
-viewer's local day matters.
+`timestamp` column. Days start at UTC midnight unless you pass a time zone
+(below).
+
+**Time zones and calendar periods.** `inPeriod` (on `date` and `datetime`
+fields) matches a calendar period around today: `{ unit: 'month', offset: 0 }`
+is this month, `{ unit: 'week', offset: -1 }` last week. Units are `day`,
+`week`, `month`, `quarter` and `year`. Pass the zone where days start, and
+optionally the first day of the week:
+
+```ts
+const translator = createDrizzleTranslator({
+  schema: articleFilterSchema,
+  table: articles,
+  timeZone: 'Asia/Shanghai',  // IANA name; default UTC
+  weekStartsOn: 1,            // 0 = Sunday … 6; default Monday
+})
+```
+
+The zone sets the bounds of `inPeriod`, of "today" for relative ops on `date`
+fields, and of `date` comparisons on timestamp columns; PG `date` columns hold
+plain days and are not shifted. Bounds are computed in JS and sent as
+parameters, so daylight-saving days have their real length (23 or 25 hours)
+and the database session zone doesn't matter. `now()` pins the clock for these
+bounds. Give `createMatcher` the same `timeZone` and `weekStartsOn`.
 
 **Negated ops keep NULL rows.** `neq`, `notIn` and `notContains` match rows
 whose column is NULL ("status is not draft" includes rows with no status),
@@ -215,8 +239,12 @@ if (parsed.ok) {
 Rows are read the way a database driver returns them: `null` / `undefined`
 is NULL, `date` / `datetime` values may be `Date` objects or ISO strings.
 Options: `get(row, fieldKey)` for other row shapes, `now()` to pin the clock
-for `inLast`, and `ops` for custom op matchers (the counterpart of the
-translator's `ops`).
+for relative ops and `inPeriod`, `timeZone` / `weekStartsOn` (as on the
+translator), and `ops` for custom op matchers (the counterpart of the
+translator's `ops`). On a `date` field a bare `YYYY-MM-DD` string is that day
+and any other value is an instant cut to its day in `timeZone`; with a
+non-UTC zone, read PG `date` columns as strings (`mode: 'string'`) rather than
+as UTC-midnight `Date`s.
 
 ### 6. Typed ASTs
 

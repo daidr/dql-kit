@@ -42,6 +42,7 @@ export const builtinOps = {
   inLast:       def('inLast',       'relative'),
   inNext:       def('inNext',       'relative'),
   notInLast:    def('notInLast',    'relative'),
+  inPeriod:     def('inPeriod',     'period'),
   containsAll:  def('containsAll',  'list'),
   containsAny:  def('containsAny',  'list'),
 } as const satisfies Record<string, OpDef>

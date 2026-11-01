@@ -75,13 +75,16 @@ const isCombinator = (x: unknown): x is Combinator => x === 'and' || x === 'or'
 
 // Copy a value into a fresh structure so the output AST never aliases
 // caller-owned input. Values that passed the shape/type checks are
-// primitives, arrays of primitives, or `{ amount, unit }` — except for
-// custom typeIds without `delegateTo`, whose values are opaque and
-// passed through as-is.
+// primitives, arrays of primitives, `{ amount, unit }` or `{ unit, offset }`,
+// except for custom typeIds without `delegateTo`, whose values are
+// opaque and passed through as-is.
 const copyValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.slice()
   if (isPlainObject(value) && has(value, 'amount') && has(value, 'unit')) {
     return { amount: value.amount, unit: value.unit }
+  }
+  if (isPlainObject(value) && has(value, 'unit') && has(value, 'offset')) {
+    return { unit: value.unit, offset: value.offset }
   }
   return value
 }

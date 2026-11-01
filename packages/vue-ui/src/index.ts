@@ -15,6 +15,7 @@ export {
   DateTimeRangeInput,
   RelativeInput,
   DateTimeInLastInput,
+  PeriodInput,
   IdAutocompleteInput,
   IdMultiAutocompleteInput,
   // Per-typeId catalogue with default + per-shape overrides. Custom
@@ -25,6 +26,8 @@ export {
   resolveRenderer,
 } from './renderers.ts'
 export {
+  resolvePeriodLabel,
   resolveRelativeUnitLabel,
+  type PeriodLabels,
   type RelativeUnitLabels,
 } from './i18n.ts'

@@ -75,6 +75,12 @@ const convert = (node: JsonSchema, ctx: Ctx): TSchema => {
         ...o,
         ...(node.exclusiveMinimum !== undefined && { exclusiveMinimum: node.exclusiveMinimum }),
       })
+    case 'integer':
+      return Type.Integer({
+        ...o,
+        ...(node.minimum !== undefined && { minimum: node.minimum }),
+        ...(node.maximum !== undefined && { maximum: node.maximum }),
+      })
     case 'boolean':
       return Type.Boolean(o)
     case 'array': {

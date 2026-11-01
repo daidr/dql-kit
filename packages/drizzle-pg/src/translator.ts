@@ -1,4 +1,4 @@
-import type { CheckedAST, FilterSchema, ValidNode } from '@dql-kit/core'
+import { resolveTimeZone, resolveWeekStart, type CheckedAST, type FilterSchema, type ValidNode } from '@dql-kit/core'
 import { and, or, sql, type AnyColumn, type SQL } from 'drizzle-orm'
 import { drizzleOps } from './ops.ts'
 import type {
@@ -18,6 +18,9 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
   // top. Result is frozen-by-convention — there is no post-construction
   // `registerOp`. Add custom ops via the `ops` option instead.
   const ops: Record<string, OpTranslator> = { ...drizzleOps, ...opts.ops }
+  const timeZone = resolveTimeZone(opts.timeZone)
+  const weekStartsOn = resolveWeekStart(opts.weekStartsOn)
+  const clock = opts.now ?? (() => new Date())
 
   const columns: Record<string, AnyColumn> = {}
   const explicit = (opts.columns ?? {}) as Record<string, AnyColumn | undefined>
@@ -40,10 +43,10 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
     Object.entries(opts.schema.fields).map(([key, def]) => [key, new Set(def.ops.map((o) => o.name))]),
   )
 
-  const translateNode = (node: ValidNode): SQL => {
+  const translateNode = (node: ValidNode, now: Date): SQL => {
     if (isGroupNode(node)) {
       if (node.children.length === 0) return sql`true`
-      const parts = node.children.map(translateNode).filter((s): s is SQL => s !== undefined)
+      const parts = node.children.map((c) => translateNode(c, now)).filter((s): s is SQL => s !== undefined)
       if (parts.length === 0) return sql`true`
       if (parts.length === 1) return parts[0]!
       const joined = node.combinator === 'and' ? and(...parts) : or(...parts)
@@ -78,13 +81,14 @@ export const createDrizzleTranslator = <S extends FilterSchema>(
         `[dql-kit/drizzle-pg] AST references field "${node.field}" not declared in schema.`,
       )
     }
-    return opFn(col, node.value, { field: fieldDef })
+    return opFn(col, node.value, { field: fieldDef, timeZone, weekStartsOn, now })
   }
 
   return {
     toWhere(ast: CheckedAST<S>): SQL {
       if (ast.children.length === 0) return sql`true`
-      return translateNode(ast)
+      // One clock reading per call, so every condition sees the same `now`.
+      return translateNode(ast, clock())
     },
   }
 }

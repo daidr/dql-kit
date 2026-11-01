@@ -2,11 +2,12 @@ import type { RelativeUnit } from '@dql-kit/core'
 import {
   dqlKitInjectionKey,
   type DqlKitState,
+  type PeriodLabels,
   type RelativeUnitLabels,
 } from '@dql-kit/vue-headless'
 import { getCurrentInstance, inject } from 'vue'
 
-export type { RelativeUnitLabels }
+export type { PeriodLabels, RelativeUnitLabels }
 
 /**
  * Resolve the active dql-kit state from the Vue tree, or `null` when
@@ -32,5 +33,18 @@ export const resolveRelativeUnitLabel = (unit: RelativeUnit | string): string =>
   const labels = state?.relativeUnitLabels as Record<string, unknown> | undefined
   const l = labels?.[unit]
   if (l === undefined) return unit
+  return typeof l === 'function' ? (l as () => string)() : (l as string)
+}
+
+/**
+ * Resolve a calendar-period label (a period unit, or `current` /
+ * `previous` / `next` / `custom`), falling back to the key itself.
+ * Apps register labels via `createDqlKit({ periodLabels: ... })`.
+ */
+export const resolvePeriodLabel = (key: keyof PeriodLabels | string): string => {
+  const state = useState()
+  const labels = state?.periodLabels as Record<string, unknown> | undefined
+  const l = labels?.[key]
+  if (l === undefined) return key
   return typeof l === 'function' ? (l as () => string)() : (l as string)
 }

@@ -1,4 +1,5 @@
 import type { RelativeUnit } from './check.ts'
+import { resolveTimeZone, zonedDayNumber } from './zone.ts'
 
 const DAY_MS = 86_400_000
 const UNIT_MS: Partial<Record<RelativeUnit, number>> = {
@@ -37,9 +38,10 @@ export const shiftByInterval = (
 const isoDay = (t: number): string => new Date(t).toISOString().slice(0, 10)
 
 /**
- * Inclusive UTC calendar-day range of a relative op on a `date` field,
- * as `YYYY-MM-DD` strings. Shared by the in-memory evaluator and the SQL
- * adapters so both cut days the same way.
+ * Inclusive calendar-day range of a relative op on a `date` field, as
+ * `YYYY-MM-DD` strings, with "today" taken in `options.timeZone` (UTC by
+ * default). Shared by the in-memory evaluator and the SQL adapters so
+ * both cut days the same way.
  *
  * - `inLast` → from `today − amount unit` (inclusive), no upper bound
  *   (like `inLast` on datetime, which has none either);
@@ -51,8 +53,10 @@ export const relativeDateRange = (
   op: 'inLast' | 'inNext',
   value: { amount: number, unit: RelativeUnit },
   now: Date,
+  options: { timeZone?: string } = {},
 ): { from: string, to?: string } => {
-  const today = new Date(Math.floor(now.getTime() / DAY_MS) * DAY_MS)
+  const timeZone = resolveTimeZone(options.timeZone)
+  const today = new Date(zonedDayNumber(now.getTime(), timeZone) * DAY_MS)
   if (op === 'inLast') {
     return { from: isoDay(shiftByInterval(today, value.amount, value.unit, -1).getTime()) }
   }

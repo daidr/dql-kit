@@ -7,6 +7,7 @@ export {
   type DqlKitOptions,
   type DqlKitState,
   type OpLabels,
+  type PeriodLabels,
   type RelativeUnitLabels,
   type RendererSet,
 } from './plugin.ts'

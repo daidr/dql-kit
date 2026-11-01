@@ -1648,3 +1648,63 @@ describe('FilterPanel — dropped[] schema-evolution notice', () => {
     expect(wrapper.find('[data-testid="dropped-notice"]').attributes('data-dropped-count')).toBe('3')
   })
 })
+
+describe('FilterPanel — calendar period input', () => {
+  const periodFilter = (value?: unknown) =>
+    useFilter({
+      schema,
+      sync: 'none',
+      initial: {
+        combinator: 'and',
+        children: [{ field: 'occurredAt', op: 'inPeriod', ...(value === undefined ? {} : { value }) }],
+      },
+    })
+  const valueOf = (filter: ReturnType<typeof periodFilter>) =>
+    (filter.draft.value.children[0] as { value?: unknown }).value
+
+  it('starts a new condition at "this day"', async () => {
+    const filter = periodFilter()
+    const wrapper = mount(FilterPanel, { props: { filter } })
+    await nextTick()
+    expect(valueOf(filter)).toEqual({ unit: 'day', offset: 0 })
+    expect(filter.valid.value.children).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('switching choice and unit emits complete values', async () => {
+    const filter = periodFilter({ unit: 'day', offset: 0 })
+    const wrapper = mount(FilterPanel, { props: { filter } })
+    await wrapper.find('[data-testid="period-offset"]').setValue('previous')
+    expect(valueOf(filter)).toEqual({ unit: 'day', offset: -1 })
+    await wrapper.find('[data-testid="period-unit"]').setValue('quarter')
+    expect(valueOf(filter)).toEqual({ unit: 'quarter', offset: -1 })
+    wrapper.unmount()
+  })
+
+  it('custom shows an offset box and ignores fractional offsets', async () => {
+    const filter = periodFilter({ unit: 'month', offset: 0 })
+    const wrapper = mount(FilterPanel, { props: { filter } })
+    expect(wrapper.find('[data-testid="period-amount"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="period-offset"]').setValue('custom')
+    const box = wrapper.find('[data-testid="period-amount"]')
+    expect(box.exists()).toBe(true)
+    await box.setValue('-3')
+    expect(valueOf(filter)).toEqual({ unit: 'month', offset: -3 })
+    await box.setValue('1.5')
+    expect(valueOf(filter)).toEqual({ unit: 'month', offset: -3 })
+    // Still custom even when the typed offset is a preset one.
+    await box.setValue('-1')
+    expect(wrapper.find('[data-testid="period-amount"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('uses periodLabels from the plugin', () => {
+    const dqlKit = createDqlKit({ periodLabels: { current: '本', month: '月' } })
+    const filter = periodFilter({ unit: 'month', offset: 0 })
+    const wrapper = mount(FilterPanel, { props: { filter }, global: { plugins: [dqlKit] } })
+    expect(wrapper.find('[data-testid="period-offset-current"]').text()).toBe('本')
+    expect(wrapper.find('[data-testid="period-unit-month"]').text()).toBe('月')
+    expect(wrapper.find('[data-testid="period-offset-previous"]').text()).toBe('previous')
+    wrapper.unmount()
+  })
+})

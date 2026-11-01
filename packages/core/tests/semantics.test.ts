@@ -9,7 +9,15 @@ import {
   type CheckedAST,
   type ValidAST,
 } from '../src/index.ts'
-import { rootOf, semanticsCases, semanticsRows, semanticsSchema } from './semantics/cases.ts'
+import {
+  calendarCases,
+  calendarRows,
+  calendarSchema,
+  rootOf,
+  semanticsCases,
+  semanticsRows,
+  semanticsSchema,
+} from './semantics/cases.ts'
 
 const now = new Date('2026-03-31T12:00:00Z')
 
@@ -21,6 +29,20 @@ describe('createMatcher — shared semantics cases', () => {
     const parsed = parseAst(rootOf(c.node), semanticsSchema)
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors))
     expect(matcher.filter(parsed.ast, rows).map((r) => r.id)).toEqual(c.expected)
+  })
+})
+
+describe('createMatcher — shared calendar cases', () => {
+  test.each(calendarCases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
+    const matcher = createMatcher({
+      schema: calendarSchema,
+      now: () => new Date(c.now),
+      timeZone: c.timeZone,
+      weekStartsOn: c.weekStartsOn,
+    })
+    const parsed = parseAst(rootOf(c.node), calendarSchema)
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors))
+    expect(matcher.filter(parsed.ast, calendarRows).map((r) => r.id)).toEqual(c.expected)
   })
 })
 

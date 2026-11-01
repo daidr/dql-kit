@@ -8,6 +8,9 @@ import { drizzle } from 'drizzle-orm/pglite'
 import { boolean, date, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 import { beforeAll, describe, expect, test } from 'vitest'
 import {
+  calendarCases,
+  calendarRows,
+  calendarSchema,
   rootOf,
   semanticsCases,
   semanticsRows,
@@ -28,6 +31,13 @@ const rowsTable = pgTable('semantics_rows', {
   seenAt: timestamp('seen_at', { withTimezone: true, mode: 'string' }),
   dueDay: date('due_day', { mode: 'string' }),
   tags: text('tags').array(),
+})
+
+const calendarTable = pgTable('calendar_rows', {
+  id: integer('id').primaryKey(),
+  at: timestamp('at', { withTimezone: true, mode: 'string' }),
+  stamp: timestamp('stamp', { withTimezone: true, mode: 'string' }),
+  day: date('day', { mode: 'string' }),
 })
 
 describe('drizzle-pg — shared semantics cases', () => {
@@ -67,6 +77,39 @@ describe('drizzle-pg — shared semantics cases', () => {
       .from(rowsTable)
       .where(translator.toWhere(parsed.ast))
       .orderBy(asc(rowsTable.id))
+    expect(rows.map((r) => r.id)).toEqual(c.expected)
+  })
+})
+
+describe('drizzle-pg — shared calendar cases', () => {
+  let db: ReturnType<typeof drizzle>
+
+  beforeAll(async () => {
+    const client = new PGlite()
+    db = drizzle(client)
+    // A session zone far from every case's zone: bounds must not depend on it.
+    await client.exec(`
+      SET TIME ZONE 'Pacific/Honolulu';
+      CREATE TABLE calendar_rows (id INTEGER PRIMARY KEY, at TIMESTAMPTZ, stamp TIMESTAMPTZ, day DATE);
+    `)
+    await db.insert(calendarTable).values(calendarRows)
+  })
+
+  test.each(calendarCases.map((c) => [c.name, c] as const))('%s', async (_name, c) => {
+    const translator = createDrizzleTranslator({
+      schema: calendarSchema,
+      table: calendarTable,
+      now: () => new Date(c.now),
+      timeZone: c.timeZone,
+      weekStartsOn: c.weekStartsOn,
+    })
+    const parsed = parseAst(rootOf(c.node), calendarSchema)
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors))
+    const rows = await db
+      .select({ id: calendarTable.id })
+      .from(calendarTable)
+      .where(translator.toWhere(parsed.ast))
+      .orderBy(asc(calendarTable.id))
     expect(rows.map((r) => r.id)).toEqual(c.expected)
   })
 })

@@ -1,4 +1,5 @@
 import { RELATIVE_UNITS } from '../src/check.ts'
+import { PERIOD_UNITS } from '../src/period.ts'
 import type { FilterSchema } from '../src/types.ts'
 
 // Seeded generator of arbitrary (mostly well-formed, often invalid)
@@ -30,8 +31,11 @@ export const randomAst = (schema: FilterSchema, rand: () => number, maxDepth = 4
     if (r < 0.45) return scalar()
     if (r < 0.65) return [scalar(), scalar()]
     if (r < 0.8) return Array.from({ length: Math.floor(rand() * 4) }, scalar)
-    if (r < 0.95) {
+    if (r < 0.88) {
       return { amount: pick([1, 0, -1, 2.5, '3']), unit: pick([...RELATIVE_UNITS, 'decade']) }
+    }
+    if (r < 0.95) {
+      return { unit: pick([...PERIOD_UNITS, 'decade']), offset: pick([0, -1, 1, 100, -101, 0.5, '1']) }
     }
     return [scalar()]
   }
@@ -39,7 +43,7 @@ export const randomAst = (schema: FilterSchema, rand: () => number, maxDepth = 4
     const key = rand() < 0.95 ? pick(fields) : 'nope'
     const field = schema.fields[key]
     const ops = field?.ops.map((o) => o.name) ?? ['eq']
-    const op = rand() < 0.9 ? pick(ops) : pick(['eq', 'contains', 'inLast', 'isEmpty', 'between'])
+    const op = rand() < 0.9 ? pick(ops) : pick(['eq', 'contains', 'inLast', 'inPeriod', 'isEmpty', 'between'])
     const v = value()
     return v === undefined ? { field: key, op } : { field: key, op, value: v }
   }
