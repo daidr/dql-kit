@@ -58,6 +58,7 @@ export type SqlPreview =
 export const previewSql = (
   schema: FilterSchema,
   ast: ValidAST,
+  timeZone?: string,
 ): SqlPreview => {
   // Same path a server takes: parse the AST against the schema, then
   // translate. Only a parsed (CheckedAST) value is accepted by toWhere.
@@ -73,6 +74,7 @@ export const previewSql = (
     const translator = createDrizzleTranslator({
       schema,
       columns: table,
+      timeZone,
     })
     const where = translator.toWhere(parsed.ast)
     const { sql, params } = dialect.sqlToQuery(where)

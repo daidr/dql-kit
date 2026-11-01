@@ -53,3 +53,16 @@ export {
   type OpMatcher,
 } from './evaluate.ts'
 export { relativeDateRange, shiftByInterval } from './relative.ts'
+export {
+  MAX_PERIOD_OFFSET,
+  PERIOD_UNITS,
+  isPeriodUnit,
+  isPeriodValue,
+  periodRange,
+  resolveWeekStart,
+  type CalendarOptions,
+  type PeriodUnit,
+  type PeriodValue,
+  type WeekStart,
+} from './period.ts'
+export { resolveTimeZone, startOfZonedDay, zonedDayNumber } from './zone.ts'

@@ -13,6 +13,7 @@ import {
   boolean,
   date,
   integer,
+  PgDialect,
   pgTable,
   serial,
   text,
@@ -1571,5 +1572,80 @@ describe('createDrizzleTranslator — date fields use half-open day ranges', () 
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors))
     const rows = await db.select().from(dayRows).where(t.toWhere(parsed.ast))
     expect(rows.map((r) => r.id).sort()).toEqual(expected)
+  })
+})
+
+describe('createDrizzleTranslator — calendar options', () => {
+  const calSchema = defineFilterSchema({ fields: { at: f.datetime(), day: f.date() } })
+  const calTable = pgTable('cal_mode_date', {
+    id: serial('id').primaryKey(),
+    at: timestamp('at', { withTimezone: true }).notNull(),
+    day: date('day', { mode: 'date' }).notNull(),
+  })
+  const period = (field: string, unit: string, offset: number) =>
+    checked({ combinator: 'and', children: [{ field, op: 'inPeriod', value: { unit, offset } }] })
+
+  test('rejects an unknown time zone or week start at construction', () => {
+    expect(() => createDrizzleTranslator({ schema: calSchema, table: calTable, timeZone: 'Nope/Nope' }))
+      .toThrow(/Unknown time zone "Nope\/Nope"/)
+    expect(() => createDrizzleTranslator({ schema: calSchema, table: calTable, weekStartsOn: 7 as never }))
+      .toThrow(/weekStartsOn/)
+  })
+
+  test('inPeriod sends bounds as parameters; the zone never reaches the SQL text', () => {
+    const t = createDrizzleTranslator({
+      schema: calSchema,
+      table: calTable,
+      timeZone: 'America/New_York',
+      now: () => new Date('2024-03-10T12:00:00Z'),
+    })
+    const q = new PgDialect().sqlToQuery(t.toWhere(period('at', 'day', 0)))
+    expect(q.sql).not.toContain('New_York')
+    expect(q.params).toEqual(['2024-03-10T05:00:00.000Z', '2024-03-11T04:00:00.000Z'])
+  })
+
+  test('inPeriod rejects a malformed value from a cast AST', () => {
+    const t = createDrizzleTranslator({ schema: calSchema, table: calTable })
+    expect(() => t.toWhere(checked({
+      combinator: 'and',
+      children: [{ field: 'at', op: 'inPeriod', value: { unit: "day'; --", offset: 0 } }],
+    }))).toThrow(/inPeriod value must be/)
+  })
+
+  test('reads the clock once per toWhere call', () => {
+    let calls = 0
+    const t = createDrizzleTranslator({
+      schema: calSchema,
+      table: calTable,
+      now: () => { calls++; return new Date('2024-03-10T12:00:00Z') },
+    })
+    t.toWhere(checked({
+      combinator: 'and',
+      children: [
+        { field: 'at', op: 'inPeriod', value: { unit: 'day', offset: 0 } },
+        { field: 'day', op: 'inPeriod', value: { unit: 'week', offset: 0 } },
+      ],
+    }))
+    expect(calls).toBe(1)
+  })
+
+  test('inPeriod runs on mode:date columns', async () => {
+    const client = new PGlite()
+    const db = drizzle(client)
+    await client.exec(`
+      CREATE TABLE cal_mode_date (id SERIAL PRIMARY KEY, at TIMESTAMPTZ NOT NULL, day DATE NOT NULL);
+      INSERT INTO cal_mode_date (at, day) VALUES
+        ('2024-03-01T12:00:00Z', '2024-03-01'),
+        ('2024-02-29T12:00:00Z', '2024-02-29');
+    `)
+    const t = createDrizzleTranslator({
+      schema: calSchema,
+      table: calTable,
+      now: () => new Date('2024-03-10T12:00:00Z'),
+    })
+    const ids = async (ast: CheckedAST) =>
+      (await db.select({ id: calTable.id }).from(calTable).where(t.toWhere(ast))).map((r) => r.id)
+    expect(await ids(period('at', 'month', 0))).toEqual([1])
+    expect(await ids(period('day', 'month', -1))).toEqual([2])
   })
 })

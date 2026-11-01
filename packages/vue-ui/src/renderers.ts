@@ -1,7 +1,11 @@
 import {
+  MAX_PERIOD_OFFSET,
+  PERIOD_UNITS,
+  isPeriodValue,
   relativeUnitsFor,
   type FieldDef,
   type Label,
+  type PeriodUnit,
   type RelativeUnit,
   type ValueShape,
 } from '@dql-kit/core'
@@ -10,8 +14,8 @@ import {
   type LabelStatus,
   type RendererSet,
 } from '@dql-kit/vue-headless'
-import { computed, defineComponent, h, inject, ref, watch, type Component, type PropType } from 'vue'
-import { resolveRelativeUnitLabel } from './i18n.ts'
+import { computed, defineComponent, h, inject, onMounted, ref, watch, type Component, type PropType } from 'vue'
+import { resolvePeriodLabel, resolveRelativeUnitLabel } from './i18n.ts'
 
 // `value` accepts any JSON-shaped condition value — string, number,
 // arrays, { amount, unit } objects for relative datetimes, etc. Using
@@ -651,6 +655,94 @@ export const RelativeInput = defineComponent({
 /** @deprecated Renamed to `RelativeInput`; it now serves date fields too. */
 export const DateTimeInLastInput = RelativeInput
 
+type OffsetChoice = 'current' | 'previous' | 'next' | 'custom'
+const OFFSET_CHOICES: readonly OffsetChoice[] = ['current', 'previous', 'next', 'custom']
+const choiceOffset: Record<Exclude<OffsetChoice, 'custom'>, number> = { current: 0, previous: -1, next: 1 }
+const choiceOf = (offset: number): OffsetChoice =>
+  offset === 0 ? 'current' : offset === -1 ? 'previous' : offset === 1 ? 'next' : 'custom'
+
+/**
+ * Calendar-period input for `period`-shape ops (`inPeriod`): this /
+ * previous / next / a custom offset, and a unit (day … year). It always
+ * emits a complete value, starting from "this day", so the condition is
+ * never left half-filled.
+ */
+export const PeriodInput = defineComponent({
+  name: 'DqlPeriodInput',
+  props: baseProps,
+  setup(props) {
+    const current = computed(() =>
+      isPeriodValue(props.value) ? props.value : { unit: 'day' as PeriodUnit, offset: 0 },
+    )
+    // "custom" stays selected even when the typed offset happens to be
+    // -1 / 0 / 1, so the number box doesn't vanish mid-edit.
+    const custom = ref(isPeriodValue(props.value) && choiceOf(props.value.offset) === 'custom')
+
+    onMounted(() => {
+      if (!isPeriodValue(props.value)) props.onUpdate({ unit: 'day', offset: 0 })
+    })
+
+    const emit = (unit: PeriodUnit, offset: number) => props.onUpdate({ unit, offset })
+
+    const updateChoice = (choice: string) => {
+      if (!(OFFSET_CHOICES as readonly string[]).includes(choice)) return
+      custom.value = choice === 'custom'
+      if (choice !== 'custom') emit(current.value.unit, choiceOffset[choice as Exclude<OffsetChoice, 'custom'>])
+    }
+    const updateUnit = (unit: string) => {
+      if (!(PERIOD_UNITS as readonly string[]).includes(unit)) return
+      emit(unit as PeriodUnit, current.value.offset)
+    }
+    const updateOffset = (raw: string) => {
+      const n = Number(raw)
+      if (raw === '' || !Number.isInteger(n) || Math.abs(n) > MAX_PERIOD_OFFSET) return
+      emit(current.value.unit, n)
+    }
+
+    return () => {
+      const choice: OffsetChoice = custom.value ? 'custom' : choiceOf(current.value.offset)
+      return h('div', { class: 'dql-input dql-input--period' }, [
+        h(
+          'select',
+          {
+            class: 'dql-period-offset',
+            'data-testid': 'period-offset',
+            value: choice,
+            onChange: (e: Event) => updateChoice((e.target as HTMLSelectElement).value),
+          },
+          OFFSET_CHOICES.map((c) =>
+            h('option', { value: c, 'data-testid': `period-offset-${c}` }, resolvePeriodLabel(c)),
+          ),
+        ),
+        choice === 'custom'
+          ? h('input', {
+              type: 'number',
+              step: '1',
+              min: String(-MAX_PERIOD_OFFSET),
+              max: String(MAX_PERIOD_OFFSET),
+              class: 'dql-period-amount',
+              'data-testid': 'period-amount',
+              value: current.value.offset,
+              onInput: (e: Event) => updateOffset((e.target as HTMLInputElement).value),
+            })
+          : null,
+        h(
+          'select',
+          {
+            class: 'dql-period-unit',
+            'data-testid': 'period-unit',
+            value: current.value.unit,
+            onChange: (e: Event) => updateUnit((e.target as HTMLSelectElement).value),
+          },
+          PERIOD_UNITS.map((u) =>
+            h('option', { value: u, 'data-testid': `period-unit-${u}` }, resolvePeriodLabel(u)),
+          ),
+        ),
+      ])
+    }
+  },
+})
+
 // Render the user-facing label text for an id, falling back through the
 // LabelStatus state machine: pending → '…', resolved → label, error → '#<id>'.
 const idDisplayText = (status: LabelStatus): string => {
@@ -925,8 +1017,8 @@ export const builtinRenderers: Readonly<Record<string, RendererSet>> = Object.fr
   number:   { default: NumberInput, pair: NumberPairInput, list: NumberTokenInput },
   boolean:  { default: BooleanSwitch },
   enum:     { default: EnumSelect, list: EnumMultiSelect },
-  date:     { default: DateInput, pair: DateRangeInput, relative: RelativeInput },
-  datetime: { default: DateTimeInput, pair: DateTimeRangeInput, relative: RelativeInput },
+  date:     { default: DateInput, pair: DateRangeInput, relative: RelativeInput, period: PeriodInput },
+  datetime: { default: DateTimeInput, pair: DateTimeRangeInput, relative: RelativeInput, period: PeriodInput },
   id:       { default: IdAutocompleteInput, list: IdMultiAutocompleteInput },
 })
 
@@ -966,7 +1058,13 @@ export const resolveRenderer = (
   } = {},
 ): Component | undefined => {
   const { overrides, delegateTo } = options
-  type ShapeMap = { default?: Component, pair?: Component, list?: Component, relative?: Component }
+  type ShapeMap = {
+    default?: Component
+    pair?: Component
+    list?: Component
+    relative?: Component
+    period?: Component
+  }
   const pickFromSet = (set: RendererSet | undefined): Component | undefined => {
     if (!set) return undefined
     if (isComponent(set)) return set

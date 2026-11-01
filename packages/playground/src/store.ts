@@ -24,6 +24,8 @@ export type PlaygroundConfig = {
   debounceMs: number
   showFloatingPanel: boolean
   opLocale: 'en' | 'zh'
+  /** IANA zone for calendar days, passed to the matcher and the SQL translator. */
+  timeZone: string
 }
 
 const DEFAULT_CONFIG: PlaygroundConfig = {
@@ -31,6 +33,7 @@ const DEFAULT_CONFIG: PlaygroundConfig = {
   debounceMs: 250,
   showFloatingPanel: true,
   opLocale: 'zh',
+  timeZone: 'UTC',
 }
 
 export type PlaygroundStore = {

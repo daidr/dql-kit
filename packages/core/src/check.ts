@@ -1,3 +1,4 @@
+import { isPeriodValue } from './period.ts'
 import type { FieldDef, ValueShape } from './types.ts'
 
 // Whitelist of relative-time units. Locked here in core because the value
@@ -30,6 +31,7 @@ export const checkShape = (value: unknown, shape: ValueShape): boolean => {
       if (typeof value === 'object' && value !== null) {
         const r = value as Record<string, unknown>
         if ('amount' in r && 'unit' in r) return false
+        if ('unit' in r && 'offset' in r) return false
       }
       return true
     }
@@ -44,6 +46,8 @@ export const checkShape = (value: unknown, shape: ValueShape): boolean => {
       if (!isRelativeUnit(r.unit)) return false
       return true
     }
+    case 'period':
+      return isPeriodValue(value)
   }
 }
 
@@ -113,7 +117,7 @@ export const checkValueType = (
   shape: ValueShape,
   value: unknown,
 ): boolean => {
-  if (shape === 'none') return true
+  if (shape === 'none' || shape === 'period') return true
   if (shape === 'relative') {
     // Shape already checked the unit is known; `date` fields also refuse
     // sub-day units.

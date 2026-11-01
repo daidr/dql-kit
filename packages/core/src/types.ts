@@ -4,7 +4,7 @@ export type Awaitable<T> = T | Promise<T>
 
 export type Combinator = 'and' | 'or'
 
-export type ValueShape = 'none' | 'single' | 'pair' | 'list' | 'relative'
+export type ValueShape = 'none' | 'single' | 'pair' | 'list' | 'relative' | 'period'
 
 export type Label = string | (() => string)
 

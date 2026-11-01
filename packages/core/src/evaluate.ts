@@ -1,5 +1,7 @@
 import type { RelativeUnit } from './check.ts'
+import { periodRange, resolveWeekStart, type PeriodValue, type WeekStart } from './period.ts'
 import { relativeDateRange, shiftByInterval } from './relative.ts'
+import { dayToNumber, isBareDay, resolveTimeZone, startOfZonedDay, zonedDayNumber } from './zone.ts'
 import type { CheckedAST, FieldDef, FilterSchema, ValidNode } from './types.ts'
 
 /**
@@ -14,7 +16,9 @@ import type { CheckedAST, FieldDef, FilterSchema, ValidNode } from './types.ts'
  * Row values are read as a database driver would return them:
  * - `null` and `undefined` are both "no value" (SQL NULL);
  * - `date` / `datetime` columns may hold a `Date` or an ISO string;
- *   `date` values compare as UTC calendar days, `datetime` as instants;
+ *   `datetime` values compare as instants, `date` values as calendar
+ *   days: a bare `YYYY-MM-DD` string is that day, anything else is an
+ *   instant cut to the day it falls on in `timeZone`;
  * - array columns are JS arrays (or `null`).
  */
 
@@ -22,6 +26,10 @@ export type MatchContext = {
   field: FieldDef
   /** The evaluation clock, for relative ops such as `inLast`. */
   now: Date
+  /** Resolved IANA zone where days start (`'UTC'` by default). */
+  timeZone: string
+  /** First day of the week for `week` periods. */
+  weekStartsOn: WeekStart
 }
 
 /**
@@ -42,6 +50,14 @@ export type CreateMatcherOptions<S extends FilterSchema, Row> = {
   get?: (row: Row, fieldKey: string) => unknown
   /** Clock for relative ops. Defaults to the current time on each call. */
   now?: () => Date
+  /**
+   * IANA time zone where calendar days start, for `date` fields holding
+   * instants and for `inPeriod` / relative ops on dates. Defaults to UTC.
+   * Use the same zone as the SQL translator.
+   */
+  timeZone?: string
+  /** First day of the week for `inPeriod` weeks: 0 = Sunday … 6. Defaults to 1 (Monday). */
+  weekStartsOn?: WeekStart
 }
 
 export type Matcher<S extends FilterSchema = FilterSchema, Row = Record<string, unknown>> = {
@@ -51,7 +67,6 @@ export type Matcher<S extends FilterSchema = FilterSchema, Row = Record<string, 
   filter(ast: CheckedAST<S>, rows: readonly Row[]): Row[]
 }
 
-const DAY_MS = 86_400_000
 const isNull = (v: unknown): v is null | undefined => v === null || v === undefined
 
 const effectiveTypeId = (field: FieldDef): string => field.delegateTo ?? field.typeId
@@ -60,24 +75,29 @@ const elementField = (field: FieldDef): FieldDef =>
 const elementTypeId = (field: FieldDef): string => effectiveTypeId(elementField(field))
 
 // Comparable form of a scalar, by the field's (element) type: `date` →
-// UTC day number, `datetime` → epoch ms, everything else unchanged.
+// day number in the context's zone, `datetime` → epoch ms, everything
+// else unchanged.
 // Returns `undefined` for a value that isn't a valid date, so a garbage
 // row value never matches instead of comparing as NaN.
 const toInstant = (v: unknown): number | undefined => {
   const t = v instanceof Date ? v.getTime() : typeof v === 'string' ? Date.parse(v) : Number.NaN
   return Number.isNaN(t) ? undefined : t
 }
-const toDay = (v: unknown): number | undefined => {
-  // A bare `YYYY-MM-DD` is already a UTC day (`Date.parse` reads it as
-  // UTC midnight); a timestamp is cut to the UTC day it falls in, the
-  // same as the half-open range the SQL adapter emits.
+const toDay = (v: unknown, timeZone: string): number | undefined => {
+  // A bare `YYYY-MM-DD` is a calendar day whatever the zone; a timestamp
+  // is cut to the day it falls in in `timeZone`, the same as the
+  // half-open range the SQL adapter emits.
+  if (isBareDay(v)) {
+    const n = dayToNumber(v)
+    return Number.isNaN(n) ? undefined : n
+  }
   const t = toInstant(v)
-  return t === undefined ? undefined : Math.floor(t / DAY_MS)
+  return t === undefined ? undefined : zonedDayNumber(t, timeZone)
 }
-const keyOf = (field: FieldDef, v: unknown): unknown => {
-  switch (elementTypeId(field)) {
+const keyOf = (ctx: MatchContext, v: unknown): unknown => {
+  switch (elementTypeId(ctx.field)) {
     case 'date':
-      return toDay(v)
+      return toDay(v, ctx.timeZone)
     case 'datetime':
       return toInstant(v)
     default:
@@ -93,14 +113,14 @@ const foldsCase = (field: FieldDef): boolean =>
 const fold = (field: FieldDef, v: unknown): string =>
   foldsCase(field) ? String(v).toLowerCase() : String(v)
 
-const same = (field: FieldDef, a: unknown, b: unknown): boolean => {
-  if (foldsCase(field)) return fold(field, a) === fold(field, b)
-  const ka = keyOf(field, a)
-  return ka !== undefined && ka === keyOf(field, b)
+const same = (ctx: MatchContext, a: unknown, b: unknown): boolean => {
+  if (foldsCase(ctx.field)) return fold(ctx.field, a) === fold(ctx.field, b)
+  const ka = keyOf(ctx, a)
+  return ka !== undefined && ka === keyOf(ctx, b)
 }
-const compare = (field: FieldDef, a: unknown, b: unknown): number | undefined => {
-  const ka = keyOf(field, a)
-  const kb = keyOf(field, b)
+const compare = (ctx: MatchContext, a: unknown, b: unknown): number | undefined => {
+  const ka = keyOf(ctx, a)
+  const kb = keyOf(ctx, b)
   if (ka === undefined || kb === undefined || isNull(ka) || isNull(kb)) return undefined
   if (typeof ka === 'number' && typeof kb === 'number') return ka - kb
   if (typeof ka === 'string' && typeof kb === 'string') return ka < kb ? -1 : ka > kb ? 1 : 0
@@ -108,20 +128,20 @@ const compare = (field: FieldDef, a: unknown, b: unknown): number | undefined =>
 }
 const cmp = (pred: (c: number) => boolean) => (actual: unknown, value: unknown, ctx: MatchContext) => {
   if (isNull(actual)) return false
-  const c = compare(ctx.field, actual, value)
+  const c = compare(ctx, actual, value)
   return c !== undefined && pred(c)
 }
 
 const isArrayField = (field: FieldDef): boolean => effectiveTypeId(field) === 'array'
 const asArray = (v: unknown): unknown[] | undefined => (Array.isArray(v) ? v : undefined)
 
-const eqOp: OpMatcher = (actual, value, ctx) => !isNull(actual) && same(ctx.field, actual, value)
+const eqOp: OpMatcher = (actual, value, ctx) => !isNull(actual) && same(ctx, actual, value)
 const inOp: OpMatcher = (actual, value, ctx) =>
-  !isNull(actual) && (value as unknown[]).some((v) => same(ctx.field, actual, v))
+  !isNull(actual) && (value as unknown[]).some((v) => same(ctx, actual, v))
 const containsOp: OpMatcher = (actual, value, ctx) => {
   if (isNull(actual)) return false
   if (isArrayField(ctx.field)) {
-    return (asArray(actual) ?? []).some((el) => same(ctx.field, el, value))
+    return (asArray(actual) ?? []).some((el) => same(ctx, el, value))
   }
   return fold(ctx.field, actual).includes(fold(ctx.field, value))
 }
@@ -143,8 +163,8 @@ type Window = { from?: number, to?: number }
 const relativeWindow = (op: 'inLast' | 'inNext', value: unknown, ctx: MatchContext): Window => {
   const v = value as { amount: number, unit: RelativeUnit }
   if (effectiveTypeId(ctx.field) === 'date') {
-    const r = relativeDateRange(op, v, ctx.now)
-    return { from: toDay(r.from), to: r.to === undefined ? undefined : toDay(r.to) }
+    const r = relativeDateRange(op, v, ctx.now, { timeZone: ctx.timeZone })
+    return { from: dayToNumber(r.from), to: r.to === undefined ? undefined : dayToNumber(r.to) }
   }
   return op === 'inLast'
     ? { from: shiftByInterval(ctx.now, v.amount, v.unit, -1).getTime() }
@@ -152,12 +172,23 @@ const relativeWindow = (op: 'inLast' | 'inNext', value: unknown, ctx: MatchConte
 }
 const inWindow = (op: 'inLast' | 'inNext'): OpMatcher => (actual, value, ctx) => {
   if (isNull(actual)) return false
-  const k = keyOf(ctx.field, actual)
+  const k = keyOf(ctx, actual)
   if (typeof k !== 'number') return false
   const w = relativeWindow(op, value, ctx)
   return (w.from === undefined || k >= w.from) && (w.to === undefined || k <= w.to)
 }
 const inLastOp = inWindow('inLast')
+
+// Calendar periods: half-open `[from, to)`. `date` compares day numbers,
+// `datetime` the instants where those days start in the context's zone.
+const inPeriodOp: OpMatcher = (actual, value, ctx) => {
+  if (isNull(actual)) return false
+  const k = keyOf(ctx, actual)
+  if (typeof k !== 'number') return false
+  const r = periodRange(value as PeriodValue, ctx.now, { timeZone: ctx.timeZone, weekStartsOn: ctx.weekStartsOn })
+  if (effectiveTypeId(ctx.field) === 'date') return k >= dayToNumber(r.from) && k < dayToNumber(r.to)
+  return k >= startOfZonedDay(r.from, ctx.timeZone) && k < startOfZonedDay(r.to, ctx.timeZone)
+}
 
 export const builtinMatchers: Readonly<Record<string, OpMatcher>> = Object.freeze({
   eq: eqOp,
@@ -187,15 +218,16 @@ export const builtinMatchers: Readonly<Record<string, OpMatcher>> = Object.freez
   // Exact negation of inLast, so NULL rows match ("not seen recently"
   // includes "never seen").
   notInLast: (actual, value, ctx) => !inLastOp(actual, value, ctx),
+  inPeriod: inPeriodOp,
   containsAll: (actual, value, ctx) => {
     const arr = asArray(actual)
     if (!arr) return false
-    return (value as unknown[]).every((v) => arr.some((el) => same(ctx.field, el, v)))
+    return (value as unknown[]).every((v) => arr.some((el) => same(ctx, el, v)))
   },
   containsAny: (actual, value, ctx) => {
     const arr = asArray(actual)
     if (!arr) return false
-    return (value as unknown[]).some((v) => arr.some((el) => same(ctx.field, el, v)))
+    return (value as unknown[]).some((v) => arr.some((el) => same(ctx, el, v)))
   },
 })
 
@@ -211,6 +243,9 @@ export const createMatcher = <S extends FilterSchema, Row = Record<string, unkno
   const ops: Record<string, OpMatcher> = { ...builtinMatchers, ...opts.ops }
   const get = opts.get ?? ((row: Row, key: string) => (row as Record<string, unknown>)[key])
   const clock = opts.now ?? (() => new Date())
+  // Validated once, so a bad zone fails at construction.
+  const timeZone = resolveTimeZone(opts.timeZone)
+  const weekStartsOn = resolveWeekStart(opts.weekStartsOn)
   const fields = opts.schema.fields as Record<string, FieldDef>
 
   const evalNode = (node: ValidNode, row: Row, now: Date): boolean => {
@@ -237,7 +272,7 @@ export const createMatcher = <S extends FilterSchema, Row = Record<string, unkno
           + `Pass it via createMatcher({ ops: { ${node.op}: ... } }).`,
       )
     }
-    return fn(get(row, node.field), node.value, { field, now })
+    return fn(get(row, node.field), node.value, { field, now, timeZone, weekStartsOn })
   }
 
   return {

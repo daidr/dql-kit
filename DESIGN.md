@@ -96,8 +96,8 @@ op-level negation (`neq`, `notIn`, `notContains`) is sufficient and clearer.
 | `number` | eq, neq, gt, gte, lt, lte, between, notBetween, in, notIn |
 | `boolean` | eq |
 | `enum<T>` | eq, neq, in, notIn |
-| `date` | eq, before, after, onOrBefore, onOrAfter, between, inLast, inNext, notInLast |
-| `datetime` | before, after, onOrBefore, onOrAfter, between, inLast, inNext, notInLast |
+| `date` | eq, before, after, onOrBefore, onOrAfter, between, inLast, inNext, notInLast, inPeriod |
+| `datetime` | before, after, onOrBefore, onOrAfter, between, inLast, inNext, notInLast, inPeriod |
 | `id<T>` | eq, neq, in, notIn (requires `search` + `resolve`) |
 | `array<U>` | contains, notContains, containsAll, containsAny, isEmpty, notEmpty |
 
@@ -207,8 +207,19 @@ adapter compares a `date` value as the half-open range
 `between [a, b]` → `col >= a AND col < b+1`, `after d` → `col >= d+1`,
 `before d` → `col < d`, `neq d` → outside `[d, d+1)` or NULL. On a PG `date`
 column this is the same as before; on a `timestamp` / `timestamptz` column
-the whole last day is now kept. Days still start at UTC midnight, not the
-viewer's; use `datetime` with explicit instants when the local day matters.
+the whole last day is now kept. ~~Days still start at UTC midnight, not the
+viewer's.~~ **Superseded (M4)**: days start at midnight in the translator's /
+matcher's `timeZone` (an IANA name, UTC by default) on timestamp columns. A PG
+`date` column holds plain days and is never shifted.
+
+**Time zones are computed in JS, not in SQL.** Day and period bounds come
+from `startOfZonedDay` / `periodRange` in core, on the platform's `Intl`
+zone data, and reach SQL as parameters. The zone name never enters the SQL
+text, the SQL bounds and `createMatcher` agree on every daylight-saving
+day, and the database session zone doesn't matter. The clock for these
+bounds is the translator's `now()` (default: the app's clock), read once
+per `toWhere` call. Relative ops on `datetime` fields keep using the
+database's `NOW()`.
 
 ### Op semantics
 
@@ -237,6 +248,7 @@ also zero length.
 | `inLast` | relative | no match | `datetime`: `col >= NOW() - amount unit` (database clock). `date`: on or after the UTC day `today - amount unit`. No upper bound. |
 | `inNext` | relative | no match | `datetime`: `NOW() <= col <= NOW() + amount unit`. `date`: today through `today + amount unit`, inclusive. |
 | `notInLast` | relative | **match** | Exact negation of `inLast` ("not seen recently" includes "never seen"). |
+| `inPeriod` | period | no match | The calendar `unit` containing today, shifted by `offset` units, half-open. `date`: days in `[from, to)`. `datetime`: instants from the start of `from` to the start of `to` in `timeZone`, so a day can be 23 or 25 hours. Weeks start on `weekStartsOn` (Monday by default). |
 | `contains` (array) | single | no match | Value is an element (exact). |
 | `notContains` (array) | single | **match** | Value is not an element; a NULL array has no elements. |
 | `containsAll` | list | no match | Array has every listed value; needs ≥ 1 value. |
@@ -244,7 +256,12 @@ also zero length.
 
 Relative units are `minute`, `hour`, `day`, `week`, `month`, `year`; `date`
 fields take `day` and coarser. Months and years move on the calendar and clamp
-to the end of a shorter month, as in PostgreSQL.
+to the end of a shorter month, as in PostgreSQL. "Today" for relative ops on
+`date` fields is the current day in `timeZone`.
+
+Period values are `{ unit, offset }` with `unit` one of `day`, `week`,
+`month`, `quarter`, `year` and an integer `offset` from -100 to 100 (0 = the
+current period, -1 the previous one).
 
 Negated ops keep NULL rows because the library has no NOT operator: they are
 how users say "not X", and "status is not draft" is expected to include rows

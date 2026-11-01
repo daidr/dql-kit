@@ -86,6 +86,9 @@ describe('typed AST: compile-time narrowing', () => {
     assertType<Equal<ValueOf<'day', 'inLast'>,
       { amount: number, unit: 'day' | 'week' | 'month' | 'year' }>>()
     assertType<Equal<ValueOf<'tags', 'containsAny'>, string[]>>()
+    assertType<Equal<ValueOf<'day', 'inPeriod'>,
+      { unit: 'day' | 'week' | 'month' | 'quarter' | 'year', offset: number }>>()
+    assertType<Equal<ValueOf<'createdAt', 'inPeriod'>, ValueOf<'day', 'inPeriod'>>>()
     assertType<Equal<ValueOf<'views', 'notBetween'>, [number, number]>>()
     assertType<Equal<ValueOf<'fulltext', 'startsWith'>, string>>()
     assertType<Equal<ValueOf<'raw', 'eq'>, unknown>>()
@@ -133,13 +136,15 @@ describe('typed AST: compile-time narrowing', () => {
       { field: 'createdAt', op: 'inLast', value: { amount: 1, unit: 'decade' } },
       // @ts-expect-error date fields take no sub-day units
       { field: 'day', op: 'inLast', value: { amount: 1, unit: 'hour' } },
+      // @ts-expect-error period unit outside the whitelist
+      { field: 'createdAt', op: 'inPeriod', value: { unit: 'decade', offset: 0 } },
       // @ts-expect-error none-shape op takes no value
       { field: 'title', op: 'isEmpty', value: 'x' },
     ]
     // Typed ASTs stay assignable to the loose form consumed by adapters.
     const loose: ValidAST = ok
     expect(loose.children).toHaveLength(3)
-    expect(bad).toHaveLength(8)
+    expect(bad).toHaveLength(9)
   })
 
   test('narrowing on field then op narrows value', () => {

@@ -10,6 +10,7 @@ const result = computed(() =>
   previewSql(
     buildSchemaFromSpec(store.appliedSpec.value),
     store.filter.value.valid.value,
+    store.config.value.timeZone,
   ),
 )
 </script>

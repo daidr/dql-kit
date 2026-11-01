@@ -1,4 +1,5 @@
 import { DATE_PATTERN, DATETIME_PATTERN, relativeUnitsFor } from './check.ts'
+import { MAX_PERIOD_OFFSET, PERIOD_UNITS } from './period.ts'
 import { resolveLimits } from './parse.ts'
 import type { AstLimits, FieldDef, FilterSchema, ValueShape } from './types.ts'
 
@@ -13,7 +14,7 @@ export type JsonSchemaObject = {
   $schema?: string
   $ref?: string
   $defs?: Record<string, JsonSchema>
-  type?: 'object' | 'array' | 'string' | 'number' | 'boolean'
+  type?: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean'
   const?: string | number | boolean
   enum?: ReadonlyArray<string | number>
   anyOf?: JsonSchema[]
@@ -26,6 +27,8 @@ export type JsonSchemaObject = {
   maxItems?: number
   pattern?: string
   exclusiveMinimum?: number
+  minimum?: number
+  maximum?: number
 }
 
 // Mirrors `checkPrimitive` in check.ts. `true` = unconstrained, used for
@@ -69,14 +72,15 @@ const valueSchema = (
       : elementSchema(field)
   switch (shape) {
     case 'single':
-      // `checkShape('single')` rejects arrays and relative-shaped
-      // objects; typed elements already exclude both.
+      // `checkShape('single')` rejects arrays and relative- or
+      // period-shaped objects; typed elements already exclude them.
       return element === true
         ? {
             not: {
               anyOf: [
                 { type: 'array' },
                 { type: 'object', properties: { amount: true, unit: true }, required: ['amount', 'unit'] },
+                { type: 'object', properties: { unit: true, offset: true }, required: ['unit', 'offset'] },
               ],
             },
           }
@@ -93,6 +97,15 @@ const valueSchema = (
           unit: { enum: relativeUnitsFor(field) },
         },
         required: ['amount', 'unit'],
+      }
+    case 'period':
+      return {
+        type: 'object',
+        properties: {
+          unit: { enum: PERIOD_UNITS },
+          offset: { type: 'integer', minimum: -MAX_PERIOD_OFFSET, maximum: MAX_PERIOD_OFFSET },
+        },
+        required: ['unit', 'offset'],
       }
   }
 }

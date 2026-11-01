@@ -81,11 +81,11 @@ const opSets = {
   enum:     [builtinOps.eq, builtinOps.neq, builtinOps.in, builtinOps.notIn],
   date:     [
     builtinOps.eq, builtinOps.before, builtinOps.after, builtinOps.onOrBefore, builtinOps.onOrAfter,
-    builtinOps.between, builtinOps.inLast, builtinOps.inNext, builtinOps.notInLast,
+    builtinOps.between, builtinOps.inLast, builtinOps.inNext, builtinOps.notInLast, builtinOps.inPeriod,
   ],
   datetime: [
     builtinOps.before, builtinOps.after, builtinOps.onOrBefore, builtinOps.onOrAfter,
-    builtinOps.between, builtinOps.inLast, builtinOps.inNext, builtinOps.notInLast,
+    builtinOps.between, builtinOps.inLast, builtinOps.inNext, builtinOps.notInLast, builtinOps.inPeriod,
   ],
   id:       [builtinOps.eq, builtinOps.neq, builtinOps.in, builtinOps.notIn],
   array:    [
