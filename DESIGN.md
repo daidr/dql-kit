@@ -577,7 +577,10 @@ layer or a later phase, with API hooks already preserved:
 
 ## Open questions for post-day-1
 
-- Aggregations (HAVING-style filters)?
+- ~~Aggregations (HAVING-style filters)?~~ **Deferred**: see
+  [ADR 0001](./docs/adr/0001-aggregate-filters.md). Per-row aggregates ("at
+  least 3 comments") are a custom op returning a correlated scalar subquery;
+  filters on grouped results wait for a real use case.
 - ~~Cross-row predicates (e.g., "articles with at least one comment containing X")?~~
   **Resolved**: a custom op on a field mapped to `null` in `columns`, with
   `existsOp` / `notExistsOp` from the Drizzle adapter wrapping a correlated

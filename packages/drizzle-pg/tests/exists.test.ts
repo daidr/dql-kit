@@ -164,3 +164,34 @@ describe('fields mapped to null', () => {
     }))).toThrow(/Built-in op "contains" needs a column/)
   })
 })
+
+// The per-row aggregate pattern from docs/adr/0001-aggregate-filters.md.
+describe('per-row aggregate through a scalar subquery', () => {
+  const commentCountAtLeast = defineOp('commentCountAtLeast', 'single', 'at least N comments')
+  const countSchema = defineFilterSchema({
+    fields: {
+      comments: f.custom({ typeId: 'relation', delegateTo: 'number', ops: [commentCountAtLeast] }),
+    },
+  })
+
+  test('matches parents by the number of related rows', async () => {
+    const t = createDrizzleTranslator({
+      schema: countSchema,
+      table: articles,
+      columns: { comments: null },
+      ops: {
+        commentCountAtLeast: (_col, v) => sql`(
+          SELECT count(*) FROM ${comments}
+          WHERE ${comments.articleId} = ${articles.id}
+        ) >= ${v}`,
+      },
+    })
+    const parsed = parseAst({
+      combinator: 'and',
+      children: [{ field: 'comments', op: 'commentCountAtLeast', value: 2 }],
+    }, countSchema)
+    if (!parsed.ok) throw new Error('expected ok')
+    const rows = await db.select({ id: articles.id }).from(articles).where(t.toWhere(parsed.ast)).orderBy(articles.id)
+    expect(rows.map((r) => r.id)).toEqual([1])
+  })
+})

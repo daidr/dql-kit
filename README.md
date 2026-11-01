@@ -282,6 +282,12 @@ A field mapped to `null` needs a custom handler for each of its ops (checked
 when the translator is built), and those handlers get `col` as `undefined`.
 `delegateTo: 'string'` gives the field a text input in the UI.
 
+Counts and sums over related rows work the same way: the handler returns a
+correlated scalar subquery, such as
+``sql`(SELECT count(*) FROM ${comments} WHERE ${comments.articleId} = ${articles.id}) >= ${v}` ``
+on a field with `delegateTo: 'number'`. Filters on grouped results (`HAVING`)
+aren't modelled; see [ADR 0001](./docs/adr/0001-aggregate-filters.md).
+
 **Negated ops keep NULL rows.** `neq`, `notIn` and `notContains` match rows
 whose column is NULL ("status is not draft" includes rows with no status),
 the same way `notEmpty` treats NULL as empty. See "Op semantics" in
